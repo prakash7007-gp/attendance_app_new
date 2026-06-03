@@ -32,13 +32,34 @@ function LoginScreen({ onLogin }) {
     if (!pw.trim()) { setError('Please enter a password'); return; }
     setLoading(true);
     setError('');
-    const { adminPw, empPw } = await getPasswords();
-    if (pw === adminPw) {
-      onLogin('admin');
-    } else if (pw === empPw) {
-      onLogin('employee');
-    } else {
-      setError('Incorrect password. Please try again.');
+    
+    try {
+      const snap = await getDocs(collection(db, 'config'));
+      let adminPw = 'admin123';
+      snap.docs.forEach(d => {
+        if (d.id === 'passwords' && d.data().admin) adminPw = d.data().admin;
+      });
+      if (pw === adminPw) {
+        onLogin('admin');
+        setLoading(false);
+        return;
+      }
+      
+      const empSnap = await getDocs(query(collection(db, 'employees')));
+      const employees = empSnap.docs.map(d => d.data());
+      const matchedEmp = employees.find(e => {
+        if (!e.name) return false;
+        const firstFour = e.name.replace(/\s+/g, '').substring(0, 4).toLowerCase();
+        return pw.toLowerCase() === `${firstFour}123`;
+      });
+      
+      if (matchedEmp) {
+        onLogin('employee', matchedEmp.id);
+      } else {
+        setError('Incorrect password. Please try again.');
+      }
+    } catch (e) {
+      setError('Error logging in. Please check your connection.');
     }
     setLoading(false);
   }
@@ -76,31 +97,9 @@ function LoginScreen({ onLogin }) {
           {loading ? 'Checking…' : 'Login'}
         </button>
         <div style={{marginTop:'20px',padding:'14px',background:'#f0f9ff',borderRadius:'8px',fontSize:'12px',color:'#0369a1'}}>
-          <strong>Admin password</strong> — full access, download &amp; delete<br/>
-          <strong>Employee password</strong> — view own attendance only
+          <strong>Admin</strong> — full access (e.g., admin123)<br/>
+          <strong>Employee</strong> — first 4 letters of name + 123 (e.g., john123)
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Employee Selector for Employee Role ──────────────────────────────────
-function EmployeePicker({ employees, selEmp, setSelEmp }) {
-  return (
-    <div style={{padding:'1.5rem 1rem',maxWidth:'400px',margin:'2rem auto'}}>
-      <div style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:'12px',padding:'1.5rem'}}>
-        <h2 style={{margin:'0 0 1rem',fontSize:'18px',fontWeight:'700',color:'#111827'}}>👤 Who are you?</h2>
-        <p style={{margin:'0 0 1rem',fontSize:'14px',color:'#6b7280'}}>Select your name to view your attendance.</p>
-        <select
-          value={selEmp}
-          onChange={e=>setSelEmp(e.target.value)}
-          style={{width:'100%',padding:'10px 12px',border:'1.5px solid #d1d5db',
-            borderRadius:'8px',fontSize:'15px',background:'#fff'}}>
-          <option value="">— Select your name —</option>
-          {employees.map(e=>(
-            <option key={e.id} value={e.id}>{e.name}{e.designation?' ('+e.designation+')':''}</option>
-          ))}
-        </select>
       </div>
     </div>
   );
@@ -214,9 +213,7 @@ function exportCSV(employees, records, month) {
 
 // ── Nav ───────────────────────────────────────────────────────────────────
 function Nav({ tab, setTab, role, onLogout }) {
-  const tabs = role === 'admin'
-    ? [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']]
-    : [['calendar','My Calendar'],['report','My Report']];
+  const tabs = [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']];
   return (
     <nav className="nav">
       <div className="nav-inner">
@@ -458,7 +455,7 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
 }
 
 // ── Mark Attendance Tab ────────────────────────────────────────────────────
-function TodayTab({ employees, records, onRefresh }) {
+function TodayTab({ employees, records, onRefresh, role }) {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [markEmp, setMarkEmp] = useState(null);
   const mo = selectedDate.slice(0,7);
@@ -489,7 +486,7 @@ function TodayTab({ employees, records, onRefresh }) {
       </div>
 
       {/* Stats */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1.5rem'}}>
+      <div className="stats-grid">
         {[
           {label:'Present',    value:present,  color:'#065f46'},
           {label:'Half Day',   value:halfDay,  color:'#1e40af'},
@@ -521,7 +518,8 @@ function TodayTab({ employees, records, onRefresh }) {
                 <table>
                   <thead><tr>
                     <th>#</th><th>Name</th><th>Status</th>
-                    <th>Perm Mins</th><th>Perm Balance</th><th>Leaves</th><th>Note</th><th>Action</th>
+                    <th>Perm Mins</th><th>Perm Balance</th><th>Leaves</th><th>Note</th>
+                    {role !== 'employee' && <th>Action</th>}
                   </tr></thead>
                   <tbody>
                     {shiftEmps.map((emp,i) => {
@@ -544,10 +542,12 @@ function TodayTab({ employees, records, onRefresh }) {
                             {leavesUsed}/{MAX_LEAVES}{overLeave&&' ⚠️'}
                           </td>
                           <td style={{fontSize:'12px',color:'#6b7280'}}>{rec?.note||'—'}</td>
-                          <td>
-                            <button className="btn btn-primary" style={{padding:'5px 12px',fontSize:'13px'}}
-                              onClick={()=>setMarkEmp(emp)}>{rec?'Edit':'Mark'}</button>
-                          </td>
+                          {role !== 'employee' && (
+                            <td>
+                              <button className="btn btn-primary" style={{padding:'5px 12px',fontSize:'13px'}}
+                                onClick={()=>setMarkEmp(emp)}>{rec?'Edit':'Mark'}</button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -570,7 +570,7 @@ function TodayTab({ employees, records, onRefresh }) {
 }
 
 // ── Employees Tab ─────────────────────────────────────────────────────────
-function EmployeesTab({ employees, records, onRefresh }) {
+function EmployeesTab({ employees, records, onRefresh, role }) {
   const [modal, setModal] = useState(null);
   const mo = monthStr();
 
@@ -584,10 +584,10 @@ function EmployeesTab({ employees, records, onRefresh }) {
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
         <h1 style={{fontSize:'22px',fontWeight:'700'}}>Employees ({employees.length})</h1>
-        <button className="btn btn-primary" onClick={()=>setModal('add')}>+ Add Employee</button>
+        {role !== 'employee' && <button className="btn btn-primary" onClick={()=>setModal('add')}>+ Add Employee</button>}
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'1rem'}}>
+      <div className="stats-grid-3">
         {SHIFTS.map(s=>{
           const count = employees.filter(e=>(e.shiftId||'A')===s.id).length;
           const colors = {A:'#1a56db',B:'#0891b2',C:'#7c3aed'};
@@ -605,7 +605,8 @@ function EmployeesTab({ employees, records, onRefresh }) {
           <table>
             <thead><tr>
               <th>#</th><th>Name</th><th>Shift</th><th>Designation</th>
-              <th>Leaves This Month</th><th>Perm Balance</th><th>Actions</th>
+              <th>Leaves This Month</th><th>Perm Balance</th>
+              {role !== 'employee' && <th>Actions</th>}
             </tr></thead>
             <tbody>
               {employees.map((emp,i)=>{
@@ -622,12 +623,14 @@ function EmployeesTab({ employees, records, onRefresh }) {
                       {leavesUsed}/{MAX_LEAVES}{leavesUsed>=MAX_LEAVES&&' ⚠️'}
                     </td>
                     <td><PermDisplay left={bal.left}/></td>
-                    <td>
-                      <div style={{display:'flex',gap:'6px'}}>
-                        <button className="btn btn-outline" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>setModal(emp)}>Edit</button>
-                        <button className="btn btn-danger" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>deleteEmp(emp)}>Delete</button>
-                      </div>
-                    </td>
+                    {role !== 'employee' && (
+                      <td>
+                        <div style={{display:'flex',gap:'6px'}}>
+                          <button className="btn btn-outline" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>setModal(emp)}>Edit</button>
+                          <button className="btn btn-danger" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>deleteEmp(emp)}>Delete</button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -709,7 +712,7 @@ function CalendarTab({ employees, records }) {
 
       {selEmp&&emp&&(
         <>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1rem'}}>
+          <div className="stats-grid">
             {[
               {label:'Present',        value:present,  color:'#065f46'},
               {label:'Half Day',       value:halfDay,  color:'#1e40af'},
@@ -810,7 +813,7 @@ function CalendarTab({ employees, records }) {
 }
 
 // ── Report Tab ────────────────────────────────────────────────────────────
-function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
+function ReportTab({ employees, records, onRefresh, role }) {
   const [reportMonth, setReportMonth] = useState(format(new Date(),'yyyy-MM'));
   const [deleting, setDeleting] = useState(false);
   const mo = reportMonth;
@@ -849,12 +852,14 @@ function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{width:'160px'}}/>
           <button className="btn btn-outline" onClick={()=>exportCSV(employees,records,mo)}>⬇ Download CSV</button>
-          <button className="btn btn-danger" onClick={handleDownloadAndDelete} disabled={deleting}>
-            {deleting?'Deleting...':'⬇ Download + Delete Month'}
-          </button>
+          {role !== 'employee' && (
+            <button className="btn btn-danger" onClick={handleDownloadAndDelete} disabled={deleting}>
+              {deleting?'Deleting...':'⬇ Download + Delete Month'}
+            </button>
+          )}
         </div>
       </div>
-      {!isEmployee && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
+      {role !== 'employee' && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
       <div className="card">
         <div className="table-wrap">
           <table>
@@ -905,10 +910,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [empSelf, setEmpSelf] = useState(''); // selected employee id for employee role
 
-  function handleLogin(r) {
+  function handleLogin(r, eId) {
     setRole(r);
-    setTab(r === 'admin' ? 'today' : 'calendar');
-    setEmpSelf('');
+    setTab('today');
+    setEmpSelf(eId || '');
   }
 
   function handleLogout() {
@@ -936,12 +941,6 @@ export default function Home() {
 
   if (!role) return <LoginScreen onLogin={handleLogin}/>;
 
-  // For employee role, filter to only their own records
-  const visibleRecords = role === 'admin' ? records
-    : records.filter(r => r.empId === empSelf);
-  const visibleEmployees = role === 'admin' ? employees
-    : employees.filter(e => e.id === empSelf);
-
   return (
     <>
       <Head>
@@ -954,32 +953,16 @@ export default function Home() {
           <div style={{textAlign:'center',padding:'4rem',color:'#6b7280'}}>Loading...</div>
         ):(
           <>
-            {/* Employee role: show name picker first */}
-            {role === 'employee' && !empSelf && (
-              <EmployeePicker employees={employees} selEmp={empSelf} setSelEmp={setEmpSelf}/>
-            )}
             {role === 'employee' && empSelf && (
-              <>
-                <div style={{padding:'8px 0 12px',fontSize:'13px',color:'#6b7280'}}>
-                  Viewing: <strong style={{color:'#111827'}}>{employees.find(e=>e.id===empSelf)?.name}</strong>
-                  <button onClick={()=>setEmpSelf('')}
-                    style={{marginLeft:'10px',fontSize:'12px',color:'#1a56db',background:'none',
-                      border:'none',cursor:'pointer',textDecoration:'underline'}}>
-                    Change
-                  </button>
-                </div>
-                {tab==='calendar'&&<CalendarTab employees={visibleEmployees} records={visibleRecords} defaultEmp={empSelf}/>}
-                {tab==='report'&&<ReportTab employees={visibleEmployees} records={visibleRecords} onRefresh={fetchData} isEmployee={true}/>}
-              </>
+              <div style={{padding:'8px 12px',marginBottom:'1rem',background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',fontSize:'13px',color:'#0369a1'}}>
+                Logged in as: <strong style={{color:'#0c4a6e'}}>{employees.find(e=>e.id===empSelf)?.name}</strong> 
+                <span style={{marginLeft:'8px',background:'#e0f2fe',color:'#0284c7',padding:'2px 8px',borderRadius:'12px',fontSize:'11px',fontWeight:'600'}}>READ-ONLY</span>
+              </div>
             )}
-            {role === 'admin' && (
-              <>
-                {tab==='today'&&<TodayTab employees={employees} records={records} onRefresh={fetchData}/>}
-                {tab==='employees'&&<EmployeesTab employees={employees} records={records} onRefresh={fetchData}/>}
-                {tab==='calendar'&&<CalendarTab employees={employees} records={records}/>}
-                {tab==='report'&&<ReportTab employees={employees} records={records} onRefresh={fetchData}/>}
-              </>
-            )}
+            {tab==='today'&&<TodayTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
+            {tab==='employees'&&<EmployeesTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
+            {tab==='calendar'&&<CalendarTab employees={employees} records={records} role={role}/>}
+            {tab==='report'&&<ReportTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
           </>
         )}
       </div>
