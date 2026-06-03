@@ -11,14 +11,33 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval,
 const MAX_LEAVES = 4;
 const MAX_PERMISSION_MINS = 120;
 
-// Status types
 const STATUS = {
-  PRESENT: 'present',
-  PRESENT_PERMISSION: 'present+permission', // came but took permission
-  ABSENT: 'absent',
-  LATE: 'late',
-  PERMISSION: 'permission', // full day permission / left early
+  PRESENT:              'present',
+  PRESENT_PERMISSION:   'present+permission',
+  HALF_FIRST:           'half-first',           // morning off, came afternoon
+  HALF_SECOND:          'half-second',          // came morning, left afternoon
+  HALF_FIRST_PERM:      'half-first+perm',      // morning off + permission time
+  HALF_SECOND_PERM:     'half-second+perm',     // afternoon off + permission time
+  ABSENT:               'absent',
+  LATE:                 'late',
+  PERMISSION:           'permission',
 };
+
+// Which statuses involve permission minutes input
+const PERM_STATUSES = [
+  STATUS.PERMISSION,
+  STATUS.PRESENT_PERMISSION,
+  STATUS.HALF_FIRST_PERM,
+  STATUS.HALF_SECOND_PERM,
+];
+
+// Which statuses count as "half day" (0.5 leave)
+const HALF_STATUSES = [
+  STATUS.HALF_FIRST,
+  STATUS.HALF_SECOND,
+  STATUS.HALF_FIRST_PERM,
+  STATUS.HALF_SECOND_PERM,
+];
 
 const SHIFTS = [
   { id: 'A', label: 'Shift A', start: '09:00', end: '18:00', display: '9:00 AM – 6:00 PM' },
@@ -30,15 +49,22 @@ function todayStr() { return format(new Date(), 'yyyy-MM-dd'); }
 function monthStr(d = new Date()) { return format(d, 'yyyy-MM'); }
 function getShift(id) { return SHIFTS.find(s => s.id === id) || SHIFTS[0]; }
 
-// Permission balance: late deducts 120, present+permission deducts actual mins
+// Leaves: absent=1, late=1, half day=0.5
+function getLeaveCount(records) {
+  const absent = records.filter(r => r.status === STATUS.ABSENT).length;
+  const late   = records.filter(r => r.status === STATUS.LATE).length;
+  const half   = records.filter(r => HALF_STATUSES.includes(r.status)).length;
+  return absent + late + (half * 0.5);
+}
+
 function getPermBalance(empId, month, records) {
   const recs = records.filter(r => r.empId === empId && r.date.startsWith(month));
   const permUsed = recs
-    .filter(r => r.status === STATUS.PERMISSION || r.status === STATUS.PRESENT_PERMISSION)
+    .filter(r => PERM_STATUSES.includes(r.status))
     .reduce((s, r) => s + (r.permMins || 0), 0);
   const lateDeduction = recs.filter(r => r.status === STATUS.LATE).length * MAX_PERMISSION_MINS;
   const totalUsed = permUsed + lateDeduction;
-  const left = MAX_PERMISSION_MINS - totalUsed; // can go negative
+  const left = MAX_PERMISSION_MINS - totalUsed;
   return { totalUsed, left, permUsed, lateDeduction };
 }
 
@@ -46,7 +72,7 @@ function exportCSV(employees, records, month) {
   const days = getDaysInMonth(new Date(month + '-01'));
   const header = ['Employee', 'Designation', 'Shift',
     ...Array.from({length: days}, (_, i) => String(i+1).padStart(2,'0')),
-    'Present', 'Absent', 'Late', 'Perm Days', 'Leaves', 'Perm Used', 'Perm Left'
+    'Present', 'Half Day', 'Absent', 'Late', 'Perm Days', 'Leave Count', 'Perm Used', 'Perm Left'
   ];
   const rows = employees.map(emp => {
     const empRecs = records.filter(r => r.empId === emp.id && r.date.startsWith(month));
@@ -55,18 +81,28 @@ function exportCSV(employees, records, month) {
       const key = String(i+1).padStart(2,'0');
       const rec = byDate[key];
       if (!rec) return '-';
-      if (rec.status === STATUS.PRESENT_PERMISSION) return `P+Perm(${rec.permMins}m)`;
-      if (rec.status === STATUS.PERMISSION) return `Perm(${rec.permMins}m)`;
-      return rec.status.charAt(0).toUpperCase();
+      const labels = {
+        'present':           'P',
+        'present+permission':`P+Pm(${rec.permMins}m)`,
+        'half-first':        'H1',
+        'half-second':       'H2',
+        'half-first+perm':   `H1+Pm(${rec.permMins}m)`,
+        'half-second+perm':  `H2+Pm(${rec.permMins}m)`,
+        'absent':            'A',
+        'late':              'L',
+        'permission':        `Pm(${rec.permMins}m)`,
+      };
+      return labels[rec.status] || rec.status;
     });
-    const present = empRecs.filter(r => r.status === STATUS.PRESENT || r.status === STATUS.PRESENT_PERMISSION).length;
-    const absent = empRecs.filter(r => r.status === STATUS.ABSENT).length;
-    const late = empRecs.filter(r => r.status === STATUS.LATE).length;
-    const perm = empRecs.filter(r => r.status === STATUS.PERMISSION || r.status === STATUS.PRESENT_PERMISSION).length;
-    const bal = getPermBalance(emp.id, month, records);
-    const leavesUsed = absent + late;
+    const present  = empRecs.filter(r => [STATUS.PRESENT, STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+    const halfDay  = empRecs.filter(r => HALF_STATUSES.includes(r.status)).length;
+    const absent   = empRecs.filter(r => r.status === STATUS.ABSENT).length;
+    const late     = empRecs.filter(r => r.status === STATUS.LATE).length;
+    const perm     = empRecs.filter(r => PERM_STATUSES.includes(r.status)).length;
+    const bal      = getPermBalance(emp.id, month, records);
+    const leaves   = getLeaveCount(empRecs);
     return [emp.name, emp.designation||'', getShift(emp.shiftId).display,
-            ...dayCells, present, absent, late, perm, leavesUsed, bal.totalUsed, bal.left];
+            ...dayCells, present, halfDay, absent, late, perm, leaves, bal.totalUsed, bal.left];
   });
   const csv = [header, ...rows].map(r => r.join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
@@ -92,15 +128,21 @@ function Nav({ tab, setTab }) {
   );
 }
 
+// Badge config for all statuses
+const BADGE_MAP = {
+  'present':            { cls: 'badge-present',     label: 'Present' },
+  'present+permission': { cls: 'badge-pressperm',   label: 'Present + Permission' },
+  'half-first':         { cls: 'badge-halffirst',   label: '½ Day — 1st Half Off' },
+  'half-second':        { cls: 'badge-halfsecond',  label: '½ Day — 2nd Half Off' },
+  'half-first+perm':    { cls: 'badge-halffirstp',  label: '½ Day (1st) + Permission' },
+  'half-second+perm':   { cls: 'badge-halfsecondp', label: '½ Day (2nd) + Permission' },
+  'absent':             { cls: 'badge-absent',      label: 'Absent' },
+  'late':               { cls: 'badge-late',        label: 'Late' },
+  'permission':         { cls: 'badge-permission',  label: 'Permission' },
+};
+
 function StatusBadge({ status }) {
-  const map = {
-    'present': ['badge-present','Present'],
-    'present+permission': ['badge-half','Present + Permission'],
-    'absent': ['badge-absent','Absent'],
-    'late': ['badge-late','Late'],
-    'permission': ['badge-permission','Permission'],
-  };
-  const [cls, label] = map[status] || ['badge-present', status];
+  const { cls, label } = BADGE_MAP[status] || { cls: 'badge-present', label: status };
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
@@ -115,14 +157,13 @@ function ShiftBadge({ shiftId }) {
   );
 }
 
-// Permission mins left display — red with minus if over limit
 function PermDisplay({ left }) {
   const over = left < 0;
   const color = over ? '#e02424' : left < 60 ? '#d97706' : '#0e9f6e';
   return (
     <span style={{fontWeight:700, color, fontSize:'14px'}}>
       {over ? `−${Math.abs(left)} min` : `${left} min`}
-      {over && <span style={{marginLeft:'4px',fontSize:'16px'}}>🔴</span>}
+      {over && <span style={{marginLeft:'4px'}}>🔴</span>}
     </span>
   );
 }
@@ -184,12 +225,32 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
   const [note, setNote] = useState(existing?.note || '');
   const shift = getShift(emp.shiftId);
   const mins = Number(permMins) || 0;
-
-  // If permission > 120 min → auto late
-  const autoLate = (status === STATUS.PERMISSION || status === STATUS.PRESENT_PERMISSION) && mins > MAX_PERMISSION_MINS;
+  const autoLate = PERM_STATUSES.includes(status) && mins > MAX_PERMISSION_MINS;
   const effectiveStatus = autoLate ? STATUS.LATE : status;
+  const needsMins = PERM_STATUSES.includes(status);
 
-  const needsMins = status === STATUS.PERMISSION || status === STATUS.PRESENT_PERMISSION;
+  // Status options grouped
+  const statusGroups = [
+    {
+      group: 'Full Day',
+      options: [
+        { value: STATUS.PRESENT,            icon: '✅',   label: 'Present',                  hint: 'Full day present' },
+        { value: STATUS.PRESENT_PERMISSION, icon: '✅🕐', label: 'Present + Permission',     hint: 'Full day + took permission time' },
+        { value: STATUS.LATE,               icon: '⏰',   label: 'Late',                     hint: 'Late arrival (deducts 120 min)' },
+        { value: STATUS.ABSENT,             icon: '❌',   label: 'Absent',                   hint: 'Did not come' },
+        { value: STATUS.PERMISSION,         icon: '🕐',   label: 'Permission Only',          hint: 'Left early / did not come' },
+      ]
+    },
+    {
+      group: '½ Half Day',
+      options: [
+        { value: STATUS.HALF_FIRST,         icon: '🌅❌', label: '1st Half Off',             hint: 'Morning absent, came afternoon' },
+        { value: STATUS.HALF_SECOND,        icon: '🌆❌', label: '2nd Half Off',             hint: 'Came morning, left after lunch' },
+        { value: STATUS.HALF_FIRST_PERM,    icon: '🌅🕐', label: '1st Half Off + Permission',hint: 'Morning off + took permission time' },
+        { value: STATUS.HALF_SECOND_PERM,   icon: '🌆🕐', label: '2nd Half Off + Permission',hint: 'Afternoon off + took permission time' },
+      ]
+    },
+  ];
 
   async function save() {
     const finalMins = needsMins ? mins : 0;
@@ -204,62 +265,65 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
     onSave();
   }
 
-  const statusOptions = [
-    { value: STATUS.PRESENT,            icon: '✅', label: 'Present' },
-    { value: STATUS.PRESENT_PERMISSION, icon: '✅🕐', label: 'Present + Permission' },
-    { value: STATUS.ABSENT,             icon: '❌', label: 'Absent' },
-    { value: STATUS.LATE,               icon: '⏰', label: 'Late' },
-    { value: STATUS.PERMISSION,         icon: '🕐', label: 'Permission Only' },
-  ];
-
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal">
+      <div className="modal" style={{maxWidth:'520px'}}>
         <h2>Mark Attendance</h2>
         <div style={{display:'flex',gap:'8px',alignItems:'center',marginBottom:'1rem',flexWrap:'wrap'}}>
           <span style={{fontWeight:700,fontSize:'15px'}}>{emp.name}</span>
-          <span style={{fontSize:'13px',color:'#6b7280'}}>·</span>
+          <span style={{color:'#6b7280'}}>·</span>
           <span style={{fontSize:'13px',color:'#6b7280'}}>{selectedDate}</span>
           <ShiftBadge shiftId={emp.shiftId}/>
         </div>
 
-        <div style={{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'1rem'}}>
-          {statusOptions.map(s => (
-            <button key={s.value} onClick={()=>setStatus(s.value)}
-              style={{padding:'10px 14px',borderRadius:'8px',border:`2px solid ${status===s.value?'#1a56db':'#e5e7eb'}`,
-                background:status===s.value?'#eff6ff':'white',cursor:'pointer',fontWeight:600,
-                fontSize:'14px',color:status===s.value?'#1a56db':'#111',textAlign:'left',
-                display:'flex',alignItems:'center',gap:'10px'}}>
-              <span style={{fontSize:'18px'}}>{s.icon}</span>
-              {s.label}
-              {s.value===STATUS.PRESENT_PERMISSION&&
-                <span style={{fontSize:'11px',color:'#6b7280',fontWeight:400,marginLeft:'auto'}}>came to work + took permission time</span>}
-            </button>
-          ))}
+        {/* Shift info */}
+        <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',
+          padding:'8px 12px',marginBottom:'1rem',fontSize:'13px',color:'#0c4a6e'}}>
+          🕐 {shift.start} – {shift.end} &nbsp;|&nbsp; Permission limit: <strong>120 min/month</strong>
         </div>
+
+        {statusGroups.map(grp => (
+          <div key={grp.group} style={{marginBottom:'1rem'}}>
+            <div style={{fontSize:'11px',fontWeight:700,color:'#6b7280',textTransform:'uppercase',
+              letterSpacing:'0.05em',marginBottom:'6px'}}>{grp.group}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+              {grp.options.map(s => (
+                <button key={s.value} onClick={()=>setStatus(s.value)}
+                  style={{padding:'9px 14px',borderRadius:'8px',
+                    border:`2px solid ${status===s.value?'#1a56db':'#e5e7eb'}`,
+                    background:status===s.value?'#eff6ff':'white',cursor:'pointer',
+                    fontWeight:600,fontSize:'13px',color:status===s.value?'#1a56db':'#111',
+                    textAlign:'left',display:'flex',alignItems:'center',gap:'10px'}}>
+                  <span style={{fontSize:'16px',minWidth:'28px'}}>{s.icon}</span>
+                  <span>{s.label}</span>
+                  <span style={{fontSize:'11px',color:'#9ca3af',fontWeight:400,marginLeft:'auto'}}>{s.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
 
         {needsMins && (
           <div style={{marginBottom:'1rem'}}>
             <label>Permission Duration (minutes)</label>
             <input type="number" value={permMins} onChange={e=>setPermMins(e.target.value)}
               placeholder="e.g. 60" min="1"/>
-            {autoLate && (
-              <p style={{color:'#e02424',fontSize:'12px',marginTop:'4px',fontWeight:600}}>
-                ⚠️ Over 120 mins → will be marked as <strong>Late</strong>
-              </p>
-            )}
-            {mins > 0 && !autoLate && (
-              <p style={{color:'#0e9f6e',fontSize:'12px',marginTop:'4px'}}>
-                ✓ {mins} min will be deducted from permission balance (120 min/month)
-              </p>
-            )}
+            {autoLate
+              ? <p style={{color:'#e02424',fontSize:'12px',marginTop:'4px',fontWeight:600}}>
+                  ⚠️ Over 120 mins → will be marked as Late
+                </p>
+              : mins > 0
+                ? <p style={{color:'#0e9f6e',fontSize:'12px',marginTop:'4px'}}>
+                    ✓ {mins} min deducted from permission balance
+                  </p>
+                : null}
           </div>
         )}
 
         {status === STATUS.LATE && (
           <div style={{background:'#fef3c7',border:'1px solid #fcd34d',borderRadius:'8px',
             padding:'8px 12px',marginBottom:'1rem',fontSize:'13px',color:'#92400e'}}>
-            ⚠️ Late will deduct <strong>120 minutes</strong> from permission balance this month.
+            ⚠️ Late deducts <strong>120 minutes</strong> from permission balance.
           </div>
         )}
 
@@ -270,7 +334,7 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
         <div style={{display:'flex',gap:'8px',marginTop:'1.5rem',justifyContent:'flex-end'}}>
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={save}>
-            Save — {effectiveStatus.replace('+',' + ').toUpperCase()}
+            Save — {(BADGE_MAP[effectiveStatus]?.label || effectiveStatus).toUpperCase()}
           </button>
         </div>
       </div>
@@ -278,52 +342,46 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
   );
 }
 
-// ── Mark Attendance Tab (Date-wise) ────────────────────────────────────────
+// ── Mark Attendance Tab ────────────────────────────────────────────────────
 function TodayTab({ employees, records, onRefresh }) {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [markEmp, setMarkEmp] = useState(null);
   const mo = selectedDate.slice(0,7);
-
   const dateRecs = records.filter(r => r.date === selectedDate);
   const byEmpId = Object.fromEntries(dateRecs.map(r => [r.empId, r]));
 
-  const present = dateRecs.filter(r => r.status===STATUS.PRESENT || r.status===STATUS.PRESENT_PERMISSION).length;
-  const absent = dateRecs.filter(r => r.status===STATUS.ABSENT).length;
-  const late = dateRecs.filter(r => r.status===STATUS.LATE).length;
-  const perm = dateRecs.filter(r => r.status===STATUS.PERMISSION || r.status===STATUS.PRESENT_PERMISSION).length;
+  const present  = dateRecs.filter(r => [STATUS.PRESENT,STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+  const halfDay  = dateRecs.filter(r => HALF_STATUSES.includes(r.status)).length;
+  const absent   = dateRecs.filter(r => r.status===STATUS.ABSENT).length;
+  const late     = dateRecs.filter(r => r.status===STATUS.LATE).length;
+  const perm     = dateRecs.filter(r => PERM_STATUSES.includes(r.status)).length;
   const unmarked = employees.length - dateRecs.length;
 
   return (
     <div>
-      <div style={{marginBottom:'1rem'}}>
-        <h1 style={{fontSize:'22px',fontWeight:'700'}}>Mark Attendance</h1>
-      </div>
+      <h1 style={{fontSize:'22px',fontWeight:'700',marginBottom:'1rem'}}>Mark Attendance</h1>
 
       {/* Date picker */}
       <div className="card" style={{marginBottom:'1.25rem',display:'flex',alignItems:'center',gap:'1rem',flexWrap:'wrap'}}>
         <div style={{flex:'1',minWidth:'180px'}}>
           <label>Select Date</label>
-          <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)}
-            max={todayStr()}/>
+          <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} max={todayStr()}/>
         </div>
-        <div style={{marginTop:'18px',display:'flex',gap:'8px'}}>
-          <button className="btn btn-outline" onClick={()=>setSelectedDate(todayStr())}>Today</button>
-        </div>
-        <div style={{marginTop:'18px'}}>
-          <span style={{fontSize:'15px',fontWeight:600,color:'#1a56db'}}>
-            {format(parseISO(selectedDate),'EEEE, dd MMMM yyyy')}
-          </span>
-        </div>
+        <button className="btn btn-outline" style={{marginTop:'18px'}} onClick={()=>setSelectedDate(todayStr())}>Today</button>
+        <span style={{marginTop:'18px',fontSize:'15px',fontWeight:600,color:'#1a56db'}}>
+          {format(parseISO(selectedDate),'EEEE, dd MMMM yyyy')}
+        </span>
       </div>
 
       {/* Stats */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'10px',marginBottom:'1.5rem'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1.5rem'}}>
         {[
-          {label:'Present',value:present,color:'#065f46'},
-          {label:'Absent',value:absent,color:'#991b1b'},
-          {label:'Late',value:late,color:'#5b21b6'},
-          {label:'Permission',value:perm,color:'#0c4a6e'},
-          {label:'Not Marked',value:unmarked,color:'#6b7280'},
+          {label:'Present',    value:present,  color:'#065f46'},
+          {label:'Half Day',   value:halfDay,  color:'#1e40af'},
+          {label:'Absent',     value:absent,   color:'#991b1b'},
+          {label:'Late',       value:late,     color:'#5b21b6'},
+          {label:'Permission', value:perm,     color:'#0c4a6e'},
+          {label:'Not Marked', value:unmarked, color:'#6b7280'},
         ].map(s=>(
           <div key={s.label} className="stat-card">
             <div className="value" style={{color:s.color}}>{s.value}</div>
@@ -332,18 +390,16 @@ function TodayTab({ employees, records, onRefresh }) {
         ))}
       </div>
 
-      {/* Employees grouped by shift */}
+      {/* Employees by shift */}
       {SHIFTS.map(shift => {
         const shiftEmps = employees.filter(e=>(e.shiftId||'A')===shift.id);
-        if (shiftEmps.length===0) return null;
+        if (!shiftEmps.length) return null;
         return (
           <div key={shift.id} style={{marginBottom:'1.5rem'}}>
             <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}}>
               <h3 style={{fontSize:'15px',fontWeight:'700'}}>{shift.label}</h3>
               <span style={{fontSize:'13px',color:'#6b7280'}}>{shift.display}</span>
-              <span style={{fontSize:'12px',background:'#f3f4f6',padding:'2px 8px',borderRadius:'20px'}}>
-                {shiftEmps.length} members
-              </span>
+              <span style={{fontSize:'12px',background:'#f3f4f6',padding:'2px 8px',borderRadius:'20px'}}>{shiftEmps.length} members</span>
             </div>
             <div className="card">
               <div className="table-wrap">
@@ -353,34 +409,29 @@ function TodayTab({ employees, records, onRefresh }) {
                     <th>Perm Mins</th><th>Perm Balance</th><th>Leaves</th><th>Note</th><th>Action</th>
                   </tr></thead>
                   <tbody>
-                    {shiftEmps.map((emp,i)=>{
+                    {shiftEmps.map((emp,i) => {
                       const rec = byEmpId[emp.id];
                       const bal = getPermBalance(emp.id, mo, records);
                       const empMoRecs = records.filter(r=>r.empId===emp.id&&r.date.startsWith(mo));
-                      const leavesUsed = empMoRecs.filter(r=>[STATUS.ABSENT,STATUS.LATE].includes(r.status)).length;
+                      const leavesUsed = getLeaveCount(empMoRecs);
+                      const overLeave = leavesUsed >= MAX_LEAVES;
                       return (
                         <tr key={emp.id}>
                           <td style={{color:'#6b7280'}}>{i+1}</td>
-                          <td style={{fontWeight:700,fontSize:'14px'}}>{emp.name}</td>
-                          <td>{rec?<StatusBadge status={rec.status}/>:
+                          <td style={{fontWeight:700}}>{emp.name}</td>
+                          <td>{rec ? <StatusBadge status={rec.status}/> :
                             <span style={{color:'#6b7280',fontSize:'13px'}}>— Not marked</span>}</td>
                           <td style={{fontSize:'13px'}}>
-                            {rec && (rec.status===STATUS.PERMISSION||rec.status===STATUS.PRESENT_PERMISSION) && rec.permMins
-                              ? `${rec.permMins} min` : '—'}
+                            {rec && PERM_STATUSES.includes(rec.status) && rec.permMins ? `${rec.permMins} min` : '—'}
                           </td>
                           <td><PermDisplay left={bal.left}/></td>
-                          <td>
-                            <span style={{color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151',
-                              fontWeight:leavesUsed>=MAX_LEAVES?700:400,fontSize:'13px'}}>
-                              {leavesUsed}/{MAX_LEAVES}{leavesUsed>=MAX_LEAVES&&' ⚠️'}
-                            </span>
+                          <td style={{color:overLeave?'#e02424':'#374151',fontWeight:overLeave?700:400,fontSize:'13px'}}>
+                            {leavesUsed}/{MAX_LEAVES}{overLeave&&' ⚠️'}
                           </td>
                           <td style={{fontSize:'12px',color:'#6b7280'}}>{rec?.note||'—'}</td>
                           <td>
                             <button className="btn btn-primary" style={{padding:'5px 12px',fontSize:'13px'}}
-                              onClick={()=>setMarkEmp(emp)}>
-                              {rec?'Edit':'Mark'}
-                            </button>
+                              onClick={()=>setMarkEmp(emp)}>{rec?'Edit':'Mark'}</button>
                           </td>
                         </tr>
                       );
@@ -444,7 +495,7 @@ function EmployeesTab({ employees, records, onRefresh }) {
             <tbody>
               {employees.map((emp,i)=>{
                 const empRecs = records.filter(r=>r.empId===emp.id&&r.date.startsWith(mo));
-                const leavesUsed = empRecs.filter(r=>[STATUS.ABSENT,STATUS.LATE].includes(r.status)).length;
+                const leavesUsed = getLeaveCount(empRecs);
                 const bal = getPermBalance(emp.id, mo, records);
                 return (
                   <tr key={emp.id}>
@@ -482,6 +533,18 @@ function EmployeesTab({ employees, records, onRefresh }) {
 }
 
 // ── Calendar Tab ──────────────────────────────────────────────────────────
+const CAL_COLORS = {
+  'present':              { bg:'#d1fae5', color:'#065f46', label:'P' },
+  'present+permission':   { bg:'#fef3c7', color:'#92400e', label:'P+Pm' },
+  'half-first':           { bg:'#dbeafe', color:'#1e40af', label:'½1' },
+  'half-second':          { bg:'#bfdbfe', color:'#1e40af', label:'½2' },
+  'half-first+perm':      { bg:'#ede9fe', color:'#5b21b6', label:'½1P' },
+  'half-second+perm':     { bg:'#ddd6fe', color:'#5b21b6', label:'½2P' },
+  'absent':               { bg:'#fee2e2', color:'#991b1b', label:'A' },
+  'late':                 { bg:'#f3e8ff', color:'#6b21a8', label:'L' },
+  'permission':           { bg:'#e0f2fe', color:'#0c4a6e', label:'Pm' },
+};
+
 function CalendarTab({ employees, records }) {
   const [selEmp, setSelEmp] = useState('');
   const [viewDate, setViewDate] = useState(new Date());
@@ -493,23 +556,13 @@ function CalendarTab({ employees, records }) {
   const empRecs = records.filter(r=>r.empId===selEmp&&r.date.startsWith(mo));
   const byDate = Object.fromEntries(empRecs.map(r=>[r.date,r]));
 
-  const present = empRecs.filter(r=>r.status===STATUS.PRESENT||r.status===STATUS.PRESENT_PERMISSION).length;
-  const absent = empRecs.filter(r=>r.status===STATUS.ABSENT).length;
-  const late = empRecs.filter(r=>r.status===STATUS.LATE).length;
-  const perm = empRecs.filter(r=>r.status===STATUS.PERMISSION||r.status===STATUS.PRESENT_PERMISSION).length;
-  const leavesUsed = absent+late;
+  const present  = empRecs.filter(r=>[STATUS.PRESENT,STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+  const halfDay  = empRecs.filter(r=>HALF_STATUSES.includes(r.status)).length;
+  const absent   = empRecs.filter(r=>r.status===STATUS.ABSENT).length;
+  const late     = empRecs.filter(r=>r.status===STATUS.LATE).length;
+  const perm     = empRecs.filter(r=>PERM_STATUSES.includes(r.status)).length;
+  const leavesUsed = emp ? getLeaveCount(empRecs) : 0;
   const bal = emp ? getPermBalance(emp.id, mo, records) : {left:120,totalUsed:0,permUsed:0,lateDeduction:0};
-
-  // Calendar day color
-  function getDayClass(rec) {
-    if (!rec) return '';
-    if (rec.status===STATUS.PRESENT) return 'present';
-    if (rec.status===STATUS.PRESENT_PERMISSION) return 'present-perm';
-    if (rec.status===STATUS.ABSENT) return 'absent';
-    if (rec.status===STATUS.LATE) return 'late';
-    if (rec.status===STATUS.PERMISSION) return 'permission';
-    return '';
-  }
 
   return (
     <div>
@@ -543,12 +596,12 @@ function CalendarTab({ employees, records }) {
         <>
           <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1rem'}}>
             {[
-              {label:'Present Days',value:present,color:'#065f46'},
-              {label:'Absent',value:absent,color:'#991b1b'},
-              {label:'Late',value:late,color:'#5b21b6'},
-              {label:'Perm Days',value:perm,color:'#0c4a6e'},
-              {label:`Leaves (${leavesUsed}/${MAX_LEAVES})`,value:leavesUsed,color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151'},
-              {label:'Perm Balance',value:<PermDisplay left={bal.left}/>,color:'#111'},
+              {label:'Present',        value:present,  color:'#065f46'},
+              {label:'Half Day',       value:halfDay,  color:'#1e40af'},
+              {label:'Absent',         value:absent,   color:'#991b1b'},
+              {label:'Late',           value:late,     color:'#5b21b6'},
+              {label:'Perm Days',      value:perm,     color:'#0c4a6e'},
+              {label:`Leaves (/${MAX_LEAVES})`, value:`${leavesUsed}`, color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151'},
             ].map((s,i)=>(
               <div key={i} className="stat-card">
                 <div className="value" style={{color:s.color,fontSize:'22px'}}>{s.value}</div>
@@ -561,10 +614,8 @@ function CalendarTab({ employees, records }) {
             <div style={{background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:'8px',
               padding:'10px 14px',marginBottom:'1rem',fontSize:'13px',color:'#991b1b',fontWeight:600}}>
               🔴 Permission exceeded by {Math.abs(bal.left)} minutes this month!
-              {bal.lateDeduction>0&&` (includes ${bal.lateDeduction} min deducted for ${late} late day${late>1?'s':''})`}
             </div>
           )}
-
           {leavesUsed>=MAX_LEAVES&&(
             <div className="alert alert-danger">⚠️ {emp.name} has used all {MAX_LEAVES} allowed leaves this month.</div>
           )}
@@ -581,32 +632,25 @@ function CalendarTab({ employees, records }) {
                 const ds = format(day,'yyyy-MM-dd');
                 const rec = byDate[ds];
                 const sun = isSunday(day);
-                let cls='cal-day';
-                if(sun) cls+=' sunday';
-                else cls+=` ${getDayClass(rec)}`;
-                if(isToday(day)) cls+=' today';
-                const title = rec ? `${rec.status}${rec.permMins?' ('+rec.permMins+' min)':''}` : '';
+                const cal = rec && !sun ? CAL_COLORS[rec.status] : null;
                 return (
-                  <div key={ds} className={cls} title={title}>
-                    {format(day,'d')}
-                    {rec?.status===STATUS.PRESENT_PERMISSION&&
-                      <span style={{fontSize:'7px',display:'block',lineHeight:1}}>P+P</span>}
+                  <div key={ds} className={`cal-day${isToday(day)?' today':''}${sun?' sunday':''}`}
+                    style={cal?{background:cal.bg,color:cal.color,border:isToday(day)?'2px solid #1a56db':'1px solid transparent'}:{}}
+                    title={rec ? BADGE_MAP[rec.status]?.label + (rec.permMins?` (${rec.permMins}min)`:'') : ''}>
+                    <div>{format(day,'d')}</div>
+                    {cal&&<div style={{fontSize:'7px',lineHeight:1,fontWeight:700}}>{cal.label}</div>}
                   </div>
                 );
               })}
             </div>
+
             {/* Legend */}
-            <div style={{display:'flex',gap:'10px',marginTop:'1rem',flexWrap:'wrap'}}>
-              {[
-                ['Present','#d1fae5','#065f46'],
-                ['Present+Perm','#fef3c7','#92400e'],
-                ['Absent','#fee2e2','#991b1b'],
-                ['Late','#ede9fe','#5b21b6'],
-                ['Permission','#e0f2fe','#0c4a6e'],
-              ].map(([s,bg,color])=>(
-                <div key={s} style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px'}}>
-                  <span style={{width:'12px',height:'12px',borderRadius:'3px',background:bg,border:`1px solid ${color}33`,display:'inline-block'}}/>
-                  <span style={{color:'#6b7280'}}>{s}</span>
+            <div style={{display:'flex',gap:'8px',marginTop:'1rem',flexWrap:'wrap'}}>
+              {Object.entries(CAL_COLORS).map(([key,{bg,color,label}])=>(
+                <div key={key} style={{display:'flex',alignItems:'center',gap:'4px',fontSize:'11px'}}>
+                  <span style={{width:'12px',height:'12px',borderRadius:'3px',background:bg,
+                    border:`1px solid ${color}44`,display:'inline-block'}}/>
+                  <span style={{color:'#6b7280'}}>{BADGE_MAP[key]?.label||key}</span>
                 </div>
               ))}
             </div>
@@ -623,11 +667,11 @@ function CalendarTab({ employees, records }) {
                       <td>{format(parseISO(r.date),'EEE, dd MMM')}</td>
                       <td><StatusBadge status={r.status}/></td>
                       <td style={{fontSize:'13px'}}>
-                        {(r.status===STATUS.PERMISSION||r.status===STATUS.PRESENT_PERMISSION)&&r.permMins
+                        {PERM_STATUSES.includes(r.status)&&r.permMins
                           ?<span style={{color:'#0891b2',fontWeight:600}}>−{r.permMins} min</span>:''}
                         {r.status===STATUS.LATE
-                          ?<span style={{color:'#d97706',fontWeight:600}}>−{MAX_PERMISSION_MINS} min (late)</span>:''}
-                        {r.status===STATUS.PRESENT||r.status===STATUS.ABSENT?'—':''}
+                          ?<span style={{color:'#d97706',fontWeight:600}}>−120 min (late)</span>:''}
+                        {[STATUS.PRESENT,STATUS.ABSENT,...HALF_STATUSES.filter(s=>!s.includes('perm'))].includes(r.status)?'—':''}
                       </td>
                       <td style={{color:'#6b7280'}}>{r.note||'—'}</td>
                     </tr>
@@ -641,7 +685,6 @@ function CalendarTab({ employees, records }) {
           </div>
         </>
       )}
-
       {!selEmp&&(
         <div className="card" style={{textAlign:'center',padding:'3rem',color:'#6b7280'}}>
           Select an employee above to view their calendar
@@ -660,13 +703,14 @@ function ReportTab({ employees, records, onRefresh }) {
 
   const summary = employees.map(emp=>{
     const recs = moRecs.filter(r=>r.empId===emp.id);
-    const present = recs.filter(r=>r.status===STATUS.PRESENT||r.status===STATUS.PRESENT_PERMISSION).length;
-    const absent = recs.filter(r=>r.status===STATUS.ABSENT).length;
-    const late = recs.filter(r=>r.status===STATUS.LATE).length;
-    const perm = recs.filter(r=>r.status===STATUS.PERMISSION||r.status===STATUS.PRESENT_PERMISSION).length;
-    const bal = getPermBalance(emp.id, mo, records);
-    const leavesUsed = absent+late;
-    return {emp, present, absent, late, perm, bal, leavesUsed};
+    const present  = recs.filter(r=>[STATUS.PRESENT,STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+    const halfDay  = recs.filter(r=>HALF_STATUSES.includes(r.status)).length;
+    const absent   = recs.filter(r=>r.status===STATUS.ABSENT).length;
+    const late     = recs.filter(r=>r.status===STATUS.LATE).length;
+    const perm     = recs.filter(r=>PERM_STATUSES.includes(r.status)).length;
+    const bal      = getPermBalance(emp.id, mo, records);
+    const leavesUsed = getLeaveCount(recs);
+    return {emp, present, halfDay, absent, late, perm, bal, leavesUsed};
   });
 
   async function handleDownloadAndDelete() {
@@ -687,7 +731,7 @@ function ReportTab({ employees, records, onRefresh }) {
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'8px'}}>
         <h1 style={{fontSize:'22px',fontWeight:'700'}}>Monthly Report</h1>
-        <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{width:'160px'}}/>
           <button className="btn btn-outline" onClick={()=>exportCSV(employees,records,mo)}>⬇ Download CSV</button>
           <button className="btn btn-danger" onClick={handleDownloadAndDelete} disabled={deleting}>
@@ -695,25 +739,23 @@ function ReportTab({ employees, records, onRefresh }) {
           </button>
         </div>
       </div>
-
-      <div className="alert alert-warning">
-        ⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.
-      </div>
-
+      <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th>#</th><th>Employee</th><th>Shift</th><th>Present</th><th>Absent</th>
-              <th>Late</th><th>Perm Days</th><th>Perm Used</th><th>Late Deduct</th><th>Perm Balance</th><th>Leaves</th><th>Status</th>
+              <th>#</th><th>Employee</th><th>Shift</th><th>Present</th><th>Half Day</th>
+              <th>Absent</th><th>Late</th><th>Perm Days</th><th>Perm Used</th>
+              <th>Late Deduct</th><th>Perm Left</th><th>Total Leaves</th><th>Status</th>
             </tr></thead>
             <tbody>
-              {summary.map(({emp,present,absent,late,perm,bal,leavesUsed},i)=>(
+              {summary.map(({emp,present,halfDay,absent,late,perm,bal,leavesUsed},i)=>(
                 <tr key={emp.id}>
                   <td style={{color:'#6b7280'}}>{i+1}</td>
                   <td style={{fontWeight:600}}>{emp.name}</td>
                   <td><ShiftBadge shiftId={emp.shiftId}/></td>
                   <td style={{color:'#0e9f6e',fontWeight:600}}>{present}</td>
+                  <td style={{color:'#1e40af',fontWeight:600}}>{halfDay}</td>
                   <td style={{color:'#e02424',fontWeight:600}}>{absent}</td>
                   <td style={{color:'#7c3aed',fontWeight:600}}>{late}</td>
                   <td style={{color:'#0891b2',fontWeight:600}}>{perm}</td>
@@ -723,15 +765,13 @@ function ReportTab({ employees, records, onRefresh }) {
                   <td style={{color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151',fontWeight:leavesUsed>=MAX_LEAVES?700:400}}>
                     {leavesUsed}/{MAX_LEAVES}{leavesUsed>=MAX_LEAVES&&' ⚠️'}
                   </td>
-                  <td>
-                    {leavesUsed>=MAX_LEAVES
-                      ?<span className="badge badge-absent">Exceeded</span>
-                      :<span className="badge badge-present">OK</span>}
-                  </td>
+                  <td>{leavesUsed>=MAX_LEAVES
+                    ?<span className="badge badge-absent">Exceeded</span>
+                    :<span className="badge badge-present">OK</span>}</td>
                 </tr>
               ))}
               {employees.length===0&&(
-                <tr><td colSpan={12} style={{textAlign:'center',color:'#6b7280',padding:'2rem'}}>No employees</td></tr>
+                <tr><td colSpan={13} style={{textAlign:'center',color:'#6b7280',padding:'2rem'}}>No employees</td></tr>
               )}
             </tbody>
           </table>
