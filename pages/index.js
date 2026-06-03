@@ -8,6 +8,106 @@ import { db } from '../lib/firebase';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval,
          getDaysInMonth, getDay, isToday, isSunday, parseISO } from 'date-fns';
 
+// ── Login helpers ─────────────────────────────────────────────────────────
+async function getPasswords() {
+  try {
+    const snap = await getDocs(collection(db, 'config'));
+    let adminPw = 'admin123', empPw = 'employee123';
+    snap.docs.forEach(d => {
+      if (d.id === 'passwords') {
+        if (d.data().admin) adminPw = d.data().admin;
+        if (d.data().employee) empPw = d.data().employee;
+      }
+    });
+    return { adminPw, empPw };
+  } catch (e) { return { adminPw: 'admin123', empPw: 'employee123' }; }
+}
+
+function LoginScreen({ onLogin }) {
+  const [pw, setPw] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleLogin() {
+    if (!pw.trim()) { setError('Please enter a password'); return; }
+    setLoading(true);
+    setError('');
+    const { adminPw, empPw } = await getPasswords();
+    if (pw === adminPw) {
+      onLogin('admin');
+    } else if (pw === empPw) {
+      onLogin('employee');
+    } else {
+      setError('Incorrect password. Please try again.');
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'linear-gradient(135deg,#1a56db 0%,#0891b2 100%)',padding:'1rem'}}>
+      <div style={{background:'#fff',borderRadius:'16px',padding:'2.5rem 2rem',
+        width:'100%',maxWidth:'380px',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'}}>
+        <div style={{textAlign:'center',marginBottom:'2rem'}}>
+          <div style={{fontSize:'40px',marginBottom:'8px'}}>📋</div>
+          <h1 style={{fontSize:'24px',fontWeight:'700',color:'#111827',margin:'0 0 4px'}}>AttendEase</h1>
+          <p style={{fontSize:'14px',color:'#6b7280',margin:0}}>Enter your password to continue</p>
+        </div>
+        <div style={{marginBottom:'16px'}}>
+          <label style={{fontSize:'13px',fontWeight:'600',color:'#374151',display:'block',marginBottom:'6px'}}>Password</label>
+          <input
+            type="password"
+            value={pw}
+            onChange={e=>{ setPw(e.target.value); setError(''); }}
+            onKeyDown={e=>e.key==='Enter'&&handleLogin()}
+            placeholder="Enter password"
+            style={{width:'100%',padding:'10px 14px',border:'1.5px solid '+(error?'#e02424':'#d1d5db'),
+              borderRadius:'8px',fontSize:'15px',outline:'none',boxSizing:'border-box'}}
+            autoFocus
+          />
+          {error && <p style={{color:'#e02424',fontSize:'13px',margin:'6px 0 0'}}>{error}</p>}
+        </div>
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          style={{width:'100%',padding:'11px',background:loading?'#9ca3af':'#1a56db',
+            color:'#fff',border:'none',borderRadius:'8px',fontSize:'15px',
+            fontWeight:'600',cursor:loading?'not-allowed':'pointer'}}>
+          {loading ? 'Checking…' : 'Login'}
+        </button>
+        <div style={{marginTop:'20px',padding:'14px',background:'#f0f9ff',borderRadius:'8px',fontSize:'12px',color:'#0369a1'}}>
+          <strong>Admin password</strong> — full access, download &amp; delete<br/>
+          <strong>Employee password</strong> — view own attendance only
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Employee Selector for Employee Role ──────────────────────────────────
+function EmployeePicker({ employees, selEmp, setSelEmp }) {
+  return (
+    <div style={{padding:'1.5rem 1rem',maxWidth:'400px',margin:'2rem auto'}}>
+      <div style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:'12px',padding:'1.5rem'}}>
+        <h2 style={{margin:'0 0 1rem',fontSize:'18px',fontWeight:'700',color:'#111827'}}>👤 Who are you?</h2>
+        <p style={{margin:'0 0 1rem',fontSize:'14px',color:'#6b7280'}}>Select your name to view your attendance.</p>
+        <select
+          value={selEmp}
+          onChange={e=>setSelEmp(e.target.value)}
+          style={{width:'100%',padding:'10px 12px',border:'1.5px solid #d1d5db',
+            borderRadius:'8px',fontSize:'15px',background:'#fff'}}>
+          <option value="">— Select your name —</option>
+          {employees.map(e=>(
+            <option key={e.id} value={e.id}>{e.name}{e.designation?' ('+e.designation+')':''}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+
+
 const MAX_LEAVES = 4;
 const MAX_PERMISSION_MINS = 120;
 
@@ -113,15 +213,30 @@ function exportCSV(employees, records, month) {
 }
 
 // ── Nav ───────────────────────────────────────────────────────────────────
-function Nav({ tab, setTab }) {
+function Nav({ tab, setTab, role, onLogout }) {
+  const tabs = role === 'admin'
+    ? [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']]
+    : [['calendar','My Calendar'],['report','My Report']];
   return (
     <nav className="nav">
       <div className="nav-inner">
         <span className="nav-brand">📋 AttendEase</span>
         <div className="nav-tabs">
-          {[['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']].map(([key,label]) => (
+          {tabs.map(([key,label]) => (
             <button key={key} className={`nav-tab${tab===key?' active':''}`} onClick={() => setTab(key)}>{label}</button>
           ))}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'8px',marginLeft:'auto'}}>
+          <span style={{fontSize:'12px',padding:'3px 10px',borderRadius:'20px',fontWeight:600,
+            background: role==='admin'?'#1a56db22':'#0891b222',
+            color: role==='admin'?'#1a56db':'#0891b2'}}>
+            {role==='admin'?'🔑 Admin':'👤 Employee'}
+          </span>
+          <button onClick={onLogout}
+            style={{fontSize:'13px',padding:'4px 12px',border:'1px solid #d1d5db',
+              borderRadius:'6px',background:'#fff',cursor:'pointer',color:'#374151'}}>
+            Logout
+          </button>
         </div>
       </div>
     </nav>
@@ -695,7 +810,7 @@ function CalendarTab({ employees, records }) {
 }
 
 // ── Report Tab ────────────────────────────────────────────────────────────
-function ReportTab({ employees, records, onRefresh }) {
+function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
   const [reportMonth, setReportMonth] = useState(format(new Date(),'yyyy-MM'));
   const [deleting, setDeleting] = useState(false);
   const mo = reportMonth;
@@ -739,7 +854,7 @@ function ReportTab({ employees, records, onRefresh }) {
           </button>
         </div>
       </div>
-      <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>
+      {!isEmployee && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
       <div className="card">
         <div className="table-wrap">
           <table>
@@ -783,10 +898,26 @@ function ReportTab({ employees, records, onRefresh }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────
 export default function Home() {
+  const [role, setRole] = useState(null); // null | 'admin' | 'employee'
   const [tab, setTab] = useState('today');
   const [employees, setEmployees] = useState([]);
   const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [empSelf, setEmpSelf] = useState(''); // selected employee id for employee role
+
+  function handleLogin(r) {
+    setRole(r);
+    setTab(r === 'admin' ? 'today' : 'calendar');
+    setEmpSelf('');
+  }
+
+  function handleLogout() {
+    setRole(null);
+    setTab('today');
+    setEmployees([]);
+    setRecords([]);
+    setEmpSelf('');
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -801,7 +932,15 @@ export default function Home() {
     setLoading(false);
   }, []);
 
-  useEffect(()=>{fetchData();},[fetchData]);
+  useEffect(()=>{ if(role) fetchData(); },[fetchData, role]);
+
+  if (!role) return <LoginScreen onLogin={handleLogin}/>;
+
+  // For employee role, filter to only their own records
+  const visibleRecords = role === 'admin' ? records
+    : records.filter(r => r.empId === empSelf);
+  const visibleEmployees = role === 'admin' ? employees
+    : employees.filter(e => e.id === empSelf);
 
   return (
     <>
@@ -809,16 +948,38 @@ export default function Home() {
         <title>AttendEase — Company Attendance</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
       </Head>
-      <Nav tab={tab} setTab={setTab}/>
+      <Nav tab={tab} setTab={setTab} role={role} onLogout={handleLogout}/>
       <div className="container" style={{padding:'1.5rem 1rem'}}>
         {loading?(
           <div style={{textAlign:'center',padding:'4rem',color:'#6b7280'}}>Loading...</div>
         ):(
           <>
-            {tab==='today'&&<TodayTab employees={employees} records={records} onRefresh={fetchData}/>}
-            {tab==='employees'&&<EmployeesTab employees={employees} records={records} onRefresh={fetchData}/>}
-            {tab==='calendar'&&<CalendarTab employees={employees} records={records}/>}
-            {tab==='report'&&<ReportTab employees={employees} records={records} onRefresh={fetchData}/>}
+            {/* Employee role: show name picker first */}
+            {role === 'employee' && !empSelf && (
+              <EmployeePicker employees={employees} selEmp={empSelf} setSelEmp={setEmpSelf}/>
+            )}
+            {role === 'employee' && empSelf && (
+              <>
+                <div style={{padding:'8px 0 12px',fontSize:'13px',color:'#6b7280'}}>
+                  Viewing: <strong style={{color:'#111827'}}>{employees.find(e=>e.id===empSelf)?.name}</strong>
+                  <button onClick={()=>setEmpSelf('')}
+                    style={{marginLeft:'10px',fontSize:'12px',color:'#1a56db',background:'none',
+                      border:'none',cursor:'pointer',textDecoration:'underline'}}>
+                    Change
+                  </button>
+                </div>
+                {tab==='calendar'&&<CalendarTab employees={visibleEmployees} records={visibleRecords} defaultEmp={empSelf}/>}
+                {tab==='report'&&<ReportTab employees={visibleEmployees} records={visibleRecords} onRefresh={fetchData} isEmployee={true}/>}
+              </>
+            )}
+            {role === 'admin' && (
+              <>
+                {tab==='today'&&<TodayTab employees={employees} records={records} onRefresh={fetchData}/>}
+                {tab==='employees'&&<EmployeesTab employees={employees} records={records} onRefresh={fetchData}/>}
+                {tab==='calendar'&&<CalendarTab employees={employees} records={records}/>}
+                {tab==='report'&&<ReportTab employees={employees} records={records} onRefresh={fetchData}/>}
+              </>
+            )}
           </>
         )}
       </div>
