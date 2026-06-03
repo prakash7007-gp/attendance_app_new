@@ -220,3 +220,21 @@ tr:hover td { background: #f9fafb; }
 
 .cal-day.present-perm { background: #fef3c7; color: #92400e; }
 .badge-half { background: #fef3c7; color: #92400e; }
+
+.cal-day.half-day      { background: #dbeafe; color: #1e40af; }
+.cal-day.half-day-perm { background: #ede9fe; color: #5b21b6; }
+.badge-halfday  { background: #dbeafe; color: #1e40af; }
+.badge-halfperm { background: #ede9fe; color: #5b21b6; }
+
+/* Half day badges */
+.badge-pressperm   { background: #fef3c7; color: #92400e; }
+.badge-halffirst   { background: #dbeafe; color: #1e40af; }
+.badge-halfsecond  { background: #bfdbfe; color: #1e40af; }
+.badge-halffirstp  { background: #ede9fe; color: #5b21b6; }
+.badge-halfsecondp { background: #ddd6fe; color: #5b21b6; }
+
+/* Calendar half day colors */
+.cal-day.half-first        { background: #dbeafe; color: #1e40af; }
+.cal-day.half-second       { background: #bfdbfe; color: #1e40af; }
+.cal-day.half-first-perm   { background: #ede9fe; color: #5b21b6; }
+.cal-day.half-second-perm  { background: #ddd6fe; color: #5b21b6; }
