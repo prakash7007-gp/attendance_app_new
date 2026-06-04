@@ -8,26 +8,20 @@ import { db } from '../lib/firebase';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval,
          getDaysInMonth, getDay, isToday, isSunday, parseISO } from 'date-fns';
 
-// ── Login helpers ─────────────────────────────────────────────────────────
-// Returns { adminPw, employeePasswords: { empId: password, ... }, employees: [...] }
 async function getLoginData() {
   try {
     const [configSnap, empSnap] = await Promise.all([
       getDocs(collection(db, 'config')),
       getDocs(query(collection(db, 'employees'), orderBy('createdAt', 'asc')))
     ]);
-
     let adminPw = 'admin123';
-    let employeePasswords = {}; // { empId: "theirpassword" }
-
+    let employeePasswords = {};
     configSnap.docs.forEach(d => {
       if (d.id === 'passwords') {
         if (d.data().admin) adminPw = d.data().admin;
-        // employees field is a map: { empId: "pw", empId2: "pw2" }
         if (d.data().employees) employeePasswords = d.data().employees;
       }
     });
-
     const employees = empSnap.docs.map(d => d.data());
     return { adminPw, employeePasswords, employees };
   } catch (e) {
@@ -44,19 +38,14 @@ function LoginScreen({ onLogin }) {
     if (!pw.trim()) { setError('Please enter a password'); return; }
     setLoading(true);
     setError('');
-
     const { adminPw, employeePasswords, employees } = await getLoginData();
-
     if (pw === adminPw) {
-      // Admin login — pass all employees
       onLogin('admin', null, employees);
     } else {
-      // Check if pw matches any employee's individual password
       const matchedEmpId = Object.keys(employeePasswords).find(
         empId => employeePasswords[empId] === pw
       );
       if (matchedEmpId) {
-        // Employee login — automatically set their identity
         onLogin('employee', matchedEmpId, employees);
       } else {
         setError('Incorrect password. Please try again.');
@@ -89,9 +78,7 @@ function LoginScreen({ onLogin }) {
           />
           {error && <p style={{color:'#e02424',fontSize:'13px',margin:'6px 0 0'}}>{error}</p>}
         </div>
-        <button
-          onClick={handleLogin}
-          disabled={loading}
+        <button onClick={handleLogin} disabled={loading}
           style={{width:'100%',padding:'11px',background:loading?'#9ca3af':'#1a56db',
             color:'#fff',border:'none',borderRadius:'8px',fontSize:'15px',
             fontWeight:'600',cursor:loading?'not-allowed':'pointer'}}>
@@ -110,15 +97,15 @@ const MAX_LEAVES = 4;
 const MAX_PERMISSION_MINS = 120;
 
 const STATUS = {
-  PRESENT:              'present',
-  PRESENT_PERMISSION:   'present+permission',
-  HALF_FIRST:           'half-first',
-  HALF_SECOND:          'half-second',
-  HALF_FIRST_PERM:      'half-first+perm',
-  HALF_SECOND_PERM:     'half-second+perm',
-  ABSENT:               'absent',
-  LATE:                 'late',
-  PERMISSION:           'permission',
+  PRESENT:            'present',
+  PRESENT_PERMISSION: 'present+permission',
+  HALF_FIRST:         'half-first',
+  HALF_SECOND:        'half-second',
+  HALF_FIRST_PERM:    'half-first+perm',
+  HALF_SECOND_PERM:   'half-second+perm',
+  ABSENT:             'absent',
+  LATE:               'late',
+  PERMISSION:         'permission',
 };
 
 const PERM_STATUSES = [
@@ -207,7 +194,6 @@ function exportCSV(employees, records, month) {
   URL.revokeObjectURL(url);
 }
 
-// ── Nav ───────────────────────────────────────────────────────────────────
 function Nav({ tab, setTab, role, empName, onLogout }) {
   const tabs = role === 'admin'
     ? [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']]
@@ -222,7 +208,6 @@ function Nav({ tab, setTab, role, empName, onLogout }) {
           ))}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'8px',marginLeft:'auto'}}>
-          {/* Show employee name in nav when employee is logged in */}
           {role === 'employee' && empName && (
             <span style={{fontSize:'13px',color:'#374151',fontWeight:600}}>👤 {empName}</span>
           )}
@@ -281,7 +266,6 @@ function PermDisplay({ left }) {
   );
 }
 
-// ── Employee Modal (Admin only — also sets password) ───────────────────────
 function EmployeeModal({ emp, onSave, onClose }) {
   const [form, setForm] = useState({
     name: emp?.name||'', designation: emp?.designation||'',
@@ -294,20 +278,14 @@ function EmployeeModal({ emp, onSave, onClose }) {
     if (!form.name.trim()) return alert('Name is required');
     if (!form.password.trim()) return alert('Password is required for the employee to login');
     const id = emp?.id || `emp_${Date.now()}`;
-
-    // Save employee record
     await setDoc(doc(db,'employees',id), {
       id, name: form.name, designation: form.designation,
       phone: form.phone, shiftId: form.shiftId,
       createdAt: emp?.createdAt||Date.now()
     });
-
-    // Save password into config/passwords.employees map
-    // We use setDoc with merge so we don't overwrite other employees' passwords
     await setDoc(doc(db,'config','passwords'), {
       employees: { [id]: form.password }
     }, { merge: true });
-
     onSave();
   }
 
@@ -320,14 +298,8 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div><label>Designation</label><input value={form.designation} onChange={e=>set('designation',e.target.value)} placeholder="e.g. Sales Executive"/></div>
           <div><label>Phone</label><input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="e.g. 9876543210"/></div>
           <div>
-            {/* Employee personal login password */}
             <label>Login Password * <span style={{fontSize:'11px',color:'#6b7280',fontWeight:400}}>(employee uses this to login)</span></label>
-            <input
-              type="text"
-              value={form.password}
-              onChange={e=>set('password',e.target.value)}
-              placeholder="e.g. prak123"
-            />
+            <input type="text" value={form.password} onChange={e=>set('password',e.target.value)} placeholder="e.g. prak123"/>
           </div>
           <div>
             <label>Work Shift</label>
@@ -356,7 +328,6 @@ function EmployeeModal({ emp, onSave, onClose }) {
   );
 }
 
-// ── Attendance Modal ───────────────────────────────────────────────────────
 function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
   const [status, setStatus] = useState(existing?.status || STATUS.PRESENT);
   const [permMins, setPermMins] = useState(existing?.permMins || '');
@@ -371,20 +342,20 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
     {
       group: 'Full Day',
       options: [
-        { value: STATUS.PRESENT,            icon: '✅',   label: 'Present',                  hint: 'Full day present' },
-        { value: STATUS.PRESENT_PERMISSION, icon: '✅🕐', label: 'Present + Permission',     hint: 'Full day + took permission time' },
-        { value: STATUS.LATE,               icon: '⏰',   label: 'Late',                     hint: 'Late arrival (deducts 120 min)' },
-        { value: STATUS.ABSENT,             icon: '❌',   label: 'Absent',                   hint: 'Did not come' },
-        { value: STATUS.PERMISSION,         icon: '🕐',   label: 'Permission Only',          hint: 'Left early / did not come' },
+        { value: STATUS.PRESENT,            icon: '✅',   label: 'Present',                   hint: 'Full day present' },
+        { value: STATUS.PRESENT_PERMISSION, icon: '✅🕐', label: 'Present + Permission',      hint: 'Full day + took permission time' },
+        { value: STATUS.LATE,               icon: '⏰',   label: 'Late',                      hint: 'Late arrival (deducts 120 min)' },
+        { value: STATUS.ABSENT,             icon: '❌',   label: 'Absent',                    hint: 'Did not come' },
+        { value: STATUS.PERMISSION,         icon: '🕐',   label: 'Permission Only',           hint: 'Left early / did not come' },
       ]
     },
     {
       group: '½ Half Day',
       options: [
-        { value: STATUS.HALF_FIRST,         icon: '🌅❌', label: '1st Half Off',             hint: 'Morning absent, came afternoon' },
-        { value: STATUS.HALF_SECOND,        icon: '🌆❌', label: '2nd Half Off',             hint: 'Came morning, left after lunch' },
-        { value: STATUS.HALF_FIRST_PERM,    icon: '🌅🕐', label: '1st Half Off + Permission',hint: 'Morning off + took permission time' },
-        { value: STATUS.HALF_SECOND_PERM,   icon: '🌆🕐', label: '2nd Half Off + Permission',hint: 'Afternoon off + took permission time' },
+        { value: STATUS.HALF_FIRST,      icon: '🌅❌', label: '1st Half Off',              hint: 'Morning absent, came afternoon' },
+        { value: STATUS.HALF_SECOND,     icon: '🌆❌', label: '2nd Half Off',              hint: 'Came morning, left after lunch' },
+        { value: STATUS.HALF_FIRST_PERM, icon: '🌅🕐', label: '1st Half Off + Permission', hint: 'Morning off + took permission time' },
+        { value: STATUS.HALF_SECOND_PERM,icon: '🌆🕐', label: '2nd Half Off + Permission', hint: 'Afternoon off + took permission time' },
       ]
     },
   ];
@@ -472,7 +443,6 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
   );
 }
 
-// ── Mark Attendance Tab ────────────────────────────────────────────────────
 function TodayTab({ employees, records, onRefresh }) {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [markEmp, setMarkEmp] = useState(null);
@@ -577,7 +547,6 @@ function TodayTab({ employees, records, onRefresh }) {
   );
 }
 
-// ── Employees Tab ─────────────────────────────────────────────────────────
 function EmployeesTab({ employees, records, onRefresh }) {
   const [modal, setModal] = useState(null);
   const mo = monthStr();
@@ -585,9 +554,6 @@ function EmployeesTab({ employees, records, onRefresh }) {
   async function deleteEmp(emp) {
     if (!confirm(`Delete ${emp.name}?`)) return;
     await deleteDoc(doc(db,'employees',emp.id));
-    // Also remove their password from config
-    // (Firestore doesn't support field delete in nested maps easily;
-    //  simplest approach: just leave it — orphan pw won't match any employee)
     onRefresh();
   }
 
@@ -655,7 +621,6 @@ function EmployeesTab({ employees, records, onRefresh }) {
   );
 }
 
-// ── Calendar Tab ──────────────────────────────────────────────────────────
 const CAL_COLORS = {
   'present':              { bg:'#d1fae5', color:'#065f46', label:'P' },
   'present+permission':   { bg:'#fef3c7', color:'#92400e', label:'P+Pm' },
@@ -668,43 +633,55 @@ const CAL_COLORS = {
   'permission':           { bg:'#e0f2fe', color:'#0c4a6e', label:'Pm' },
 };
 
-function CalendarTab({ employees, records, defaultEmp }) {
+// ── UPDATED CalendarTab ───────────────────────────────────────────────────
+function CalendarTab({ employees, records, defaultEmp, onRefresh }) {
   const [selEmp, setSelEmp] = useState(defaultEmp || '');
   const [viewDate, setViewDate] = useState(new Date());
+  const [markEmp, setMarkEmp] = useState(null);
+  const [markDate, setMarkDate] = useState(null);
+
   const mo = monthStr(viewDate);
-  const emp = employees.find(e=>e.id===selEmp);
-  const days = eachDayOfInterval({start:startOfMonth(viewDate),end:endOfMonth(viewDate)});
+  const emp = employees.find(e => e.id === selEmp);
+  const days = eachDayOfInterval({ start: startOfMonth(viewDate), end: endOfMonth(viewDate) });
   const firstDay = getDay(startOfMonth(viewDate));
   const blanks = Array(firstDay).fill(null);
-  const empRecs = records.filter(r=>r.empId===selEmp&&r.date.startsWith(mo));
-  const byDate = Object.fromEntries(empRecs.map(r=>[r.date,r]));
+  const empRecs = records.filter(r => r.empId === selEmp && r.date.startsWith(mo));
+  const byDate = Object.fromEntries(empRecs.map(r => [r.date, r]));
 
-  const present  = empRecs.filter(r=>[STATUS.PRESENT,STATUS.PRESENT_PERMISSION].includes(r.status)).length;
-  const halfDay  = empRecs.filter(r=>HALF_STATUSES.includes(r.status)).length;
-  const absent   = empRecs.filter(r=>r.status===STATUS.ABSENT).length;
-  const late     = empRecs.filter(r=>r.status===STATUS.LATE).length;
-  const perm     = empRecs.filter(r=>PERM_STATUSES.includes(r.status)).length;
+  const present    = empRecs.filter(r => [STATUS.PRESENT, STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+  const halfDay    = empRecs.filter(r => HALF_STATUSES.includes(r.status)).length;
+  const absent     = empRecs.filter(r => r.status === STATUS.ABSENT).length;
+  const late       = empRecs.filter(r => r.status === STATUS.LATE).length;
+  const perm       = empRecs.filter(r => PERM_STATUSES.includes(r.status)).length;
   const leavesUsed = emp ? getLeaveCount(empRecs) : 0;
-  const bal = emp ? getPermBalance(emp.id, mo, records) : {left:120,totalUsed:0,permUsed:0,lateDeduction:0};
+  const bal        = emp ? getPermBalance(emp.id, mo, records) : { left: 120, totalUsed: 0, permUsed: 0, lateDeduction: 0 };
 
-  // If defaultEmp is set (employee role), don't show the employee selector
   const isEmployeeView = !!defaultEmp;
+
+  function handleDayClick(day) {
+    if (!emp) return;
+    const ds = format(day, 'yyyy-MM-dd');
+    if (isSunday(day)) return;
+    if (ds > todayStr()) return;
+    setMarkDate(ds);
+    setMarkEmp(emp);
+  }
 
   return (
     <div>
-      <h1 style={{fontSize:'22px',fontWeight:'700',marginBottom:'1rem'}}>
+      <h1 style={{ fontSize: '22px', fontWeight: '700', marginBottom: '1rem' }}>
         {isEmployeeView ? 'My Calendar' : 'Calendar View'}
       </h1>
-      <div className="card" style={{marginBottom:'1rem'}}>
-        <div style={{display:'flex',gap:'1rem',alignItems:'center',flexWrap:'wrap'}}>
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {!isEmployeeView && (
-            <div style={{flex:'1',minWidth:'200px'}}>
+            <div style={{ flex: '1', minWidth: '200px' }}>
               <label>Select Employee</label>
-              <select value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
+              <select value={selEmp} onChange={e => setSelEmp(e.target.value)}>
                 <option value="">— Choose employee —</option>
-                {SHIFTS.map(s=>(
+                {SHIFTS.map(s => (
                   <optgroup key={s.id} label={`${s.label} · ${s.display}`}>
-                    {employees.filter(e=>(e.shiftId||'A')===s.id).map(e=>(
+                    {employees.filter(e => (e.shiftId || 'A') === s.id).map(e => (
                       <option key={e.id} value={e.id}>{e.name}</option>
                     ))}
                   </optgroup>
@@ -712,97 +689,125 @@ function CalendarTab({ employees, records, defaultEmp }) {
               </select>
             </div>
           )}
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop: !isEmployeeView ? '18px' : '0'}}>
-            <button className="btn btn-outline" style={{padding:'8px'}}
-              onClick={()=>setViewDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}>←</button>
-            <span style={{fontWeight:600,minWidth:'130px',textAlign:'center'}}>{format(viewDate,'MMMM yyyy')}</span>
-            <button className="btn btn-outline" style={{padding:'8px'}}
-              onClick={()=>setViewDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}>→</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: !isEmployeeView ? '18px' : '0' }}>
+            <button className="btn btn-outline" style={{ padding: '8px' }}
+              onClick={() => setViewDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>←</button>
+            <span style={{ fontWeight: 600, minWidth: '130px', textAlign: 'center' }}>{format(viewDate, 'MMMM yyyy')}</span>
+            <button className="btn btn-outline" style={{ padding: '8px' }}
+              onClick={() => setViewDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>→</button>
           </div>
         </div>
       </div>
 
-      {selEmp&&emp&&(
+      {selEmp && emp && (
         <>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1rem'}}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: '10px', marginBottom: '1rem' }}>
             {[
-              {label:'Present',        value:present,  color:'#065f46'},
-              {label:'Half Day',       value:halfDay,  color:'#1e40af'},
-              {label:'Absent',         value:absent,   color:'#991b1b'},
-              {label:'Late',           value:late,     color:'#5b21b6'},
-              {label:'Perm Days',      value:perm,     color:'#0c4a6e'},
-              {label:`Leaves (/${MAX_LEAVES})`, value:`${leavesUsed}`, color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151'},
-            ].map((s,i)=>(
+              { label: 'Present',                 value: present,    color: '#065f46' },
+              { label: 'Half Day',                value: halfDay,    color: '#1e40af' },
+              { label: 'Absent',                  value: absent,     color: '#991b1b' },
+              { label: 'Late',                    value: late,       color: '#5b21b6' },
+              { label: 'Perm Days',               value: perm,       color: '#0c4a6e' },
+              { label: `Leaves (/${MAX_LEAVES})`, value: leavesUsed, color: leavesUsed >= MAX_LEAVES ? '#e02424' : '#374151' },
+            ].map((s, i) => (
               <div key={i} className="stat-card">
-                <div className="value" style={{color:s.color,fontSize:'22px'}}>{s.value}</div>
+                <div className="value" style={{ color: s.color, fontSize: '22px' }}>{s.value}</div>
                 <div className="label">{s.label}</div>
               </div>
             ))}
           </div>
+
           {bal.left < 0 && (
-            <div style={{background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:'8px',
-              padding:'10px 14px',marginBottom:'1rem',fontSize:'13px',color:'#991b1b',fontWeight:600}}>
+            <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px',
+              padding: '10px 14px', marginBottom: '1rem', fontSize: '13px', color: '#991b1b', fontWeight: 600 }}>
               🔴 Permission exceeded by {Math.abs(bal.left)} minutes this month!
             </div>
           )}
-          {leavesUsed>=MAX_LEAVES&&(
+          {leavesUsed >= MAX_LEAVES && (
             <div className="alert alert-danger">⚠️ {emp.name} has used all {MAX_LEAVES} allowed leaves this month.</div>
           )}
+
+          {isEmployeeView && (
+            <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px',
+              padding: '8px 14px', marginBottom: '1rem', fontSize: '13px', color: '#0369a1' }}>
+              💡 Click any past day to mark or update your attendance.
+            </div>
+          )}
+
           <div className="card">
-            <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',marginBottom:'8px',textAlign:'center'}}>
-              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>(
-                <div key={d} style={{fontSize:'12px',fontWeight:'600',color:'#6b7280',padding:'4px'}}>{d}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '4px', marginBottom: '8px', textAlign: 'center' }}>
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                <div key={d} style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', padding: '4px' }}>{d}</div>
               ))}
             </div>
             <div className="calendar-grid">
-              {blanks.map((_,i)=><div key={`b${i}`} className="cal-day empty"/>)}
-              {days.map(day=>{
-                const ds = format(day,'yyyy-MM-dd');
+              {blanks.map((_, i) => <div key={`b${i}`} className="cal-day empty" />)}
+              {days.map(day => {
+                const ds = format(day, 'yyyy-MM-dd');
                 const rec = byDate[ds];
                 const sun = isSunday(day);
+                const isFuture = ds > todayStr();
                 const cal = rec && !sun ? CAL_COLORS[rec.status] : null;
+                const clickable = isEmployeeView && !sun && !isFuture;
+
                 return (
-                  <div key={ds} className={`cal-day${isToday(day)?' today':''}${sun?' sunday':''}`}
-                    style={cal?{background:cal.bg,color:cal.color,border:isToday(day)?'2px solid #1a56db':'1px solid transparent'}:{}}
-                    title={rec ? BADGE_MAP[rec.status]?.label + (rec.permMins?` (${rec.permMins}min)`:'') : ''}>
-                    <div>{format(day,'d')}</div>
-                    {cal&&<div style={{fontSize:'7px',lineHeight:1,fontWeight:700}}>{cal.label}</div>}
+                  <div
+                    key={ds}
+                    className={`cal-day${isToday(day) ? ' today' : ''}${sun ? ' sunday' : ''}`}
+                    onClick={() => clickable && handleDayClick(day)}
+                    style={{
+                      ...(cal ? {
+                        background: cal.bg,
+                        color: cal.color,
+                        border: isToday(day) ? '2px solid #1a56db' : '1px solid transparent'
+                      } : {}),
+                      ...(clickable ? { cursor: 'pointer' } : {}),
+                    }}
+                    title={
+                      rec
+                        ? BADGE_MAP[rec.status]?.label + (rec.permMins ? ` (${rec.permMins}min)` : '')
+                        : clickable ? 'Click to mark attendance' : ''
+                    }
+                  >
+                    <div>{format(day, 'd')}</div>
+                    {cal && <div style={{ fontSize: '7px', lineHeight: 1, fontWeight: 700 }}>{cal.label}</div>}
                   </div>
                 );
               })}
             </div>
-            <div style={{display:'flex',gap:'8px',marginTop:'1rem',flexWrap:'wrap'}}>
-              {Object.entries(CAL_COLORS).map(([key,{bg,color}])=>(
-                <div key={key} style={{display:'flex',alignItems:'center',gap:'4px',fontSize:'11px'}}>
-                  <span style={{width:'12px',height:'12px',borderRadius:'3px',background:bg,
-                    border:`1px solid ${color}44`,display:'inline-block'}}/>
-                  <span style={{color:'#6b7280'}}>{BADGE_MAP[key]?.label||key}</span>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '1rem', flexWrap: 'wrap' }}>
+              {Object.entries(CAL_COLORS).map(([key, { bg, color }]) => (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
+                  <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: bg,
+                    border: `1px solid ${color}44`, display: 'inline-block' }} />
+                  <span style={{ color: '#6b7280' }}>{BADGE_MAP[key]?.label || key}</span>
                 </div>
               ))}
             </div>
           </div>
-          <div className="card" style={{marginTop:'1rem'}}>
-            <h3 style={{fontSize:'15px',fontWeight:'600',marginBottom:'0.75rem'}}>Attendance Details</h3>
+
+          <div className="card" style={{ marginTop: '1rem' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '0.75rem' }}>Attendance Details</h3>
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Date</th><th>Status</th><th>Perm Mins</th><th>Note</th></tr></thead>
                 <tbody>
-                  {empRecs.sort((a,b)=>a.date.localeCompare(b.date)).map(r=>(
+                  {empRecs.sort((a, b) => a.date.localeCompare(b.date)).map(r => (
                     <tr key={r.id}>
-                      <td>{format(parseISO(r.date),'EEE, dd MMM')}</td>
-                      <td><StatusBadge status={r.status}/></td>
-                      <td style={{fontSize:'13px'}}>
-                        {PERM_STATUSES.includes(r.status)&&r.permMins
-                          ?<span style={{color:'#0891b2',fontWeight:600}}>−{r.permMins} min</span>:''}
-                        {r.status===STATUS.LATE
-                          ?<span style={{color:'#d97706',fontWeight:600}}>−120 min (late)</span>:''}
-                        {[STATUS.PRESENT,STATUS.ABSENT,...HALF_STATUSES.filter(s=>!s.includes('perm'))].includes(r.status)?'—':''}
+                      <td>{format(parseISO(r.date), 'EEE, dd MMM')}</td>
+                      <td><StatusBadge status={r.status} /></td>
+                      <td style={{ fontSize: '13px' }}>
+                        {PERM_STATUSES.includes(r.status) && r.permMins
+                          ? <span style={{ color: '#0891b2', fontWeight: 600 }}>−{r.permMins} min</span> : ''}
+                        {r.status === STATUS.LATE
+                          ? <span style={{ color: '#d97706', fontWeight: 600 }}>−120 min (late)</span> : ''}
+                        {[STATUS.PRESENT, STATUS.ABSENT, ...HALF_STATUSES.filter(s => !s.includes('perm'))].includes(r.status) ? '—' : ''}
                       </td>
-                      <td style={{color:'#6b7280'}}>{r.note||'—'}</td>
+                      <td style={{ color: '#6b7280' }}>{r.note || '—'}</td>
                     </tr>
                   ))}
-                  {empRecs.length===0&&(
-                    <tr><td colSpan={4} style={{textAlign:'center',color:'#6b7280'}}>No records</td></tr>
+                  {empRecs.length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: '#6b7280' }}>No records</td></tr>
                   )}
                 </tbody>
               </table>
@@ -810,32 +815,42 @@ function CalendarTab({ employees, records, defaultEmp }) {
           </div>
         </>
       )}
-      {!selEmp&&!isEmployeeView&&(
-        <div className="card" style={{textAlign:'center',padding:'3rem',color:'#6b7280'}}>
+
+      {!selEmp && !isEmployeeView && (
+        <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>
           Select an employee above to view their calendar
         </div>
+      )}
+
+      {markEmp && markDate && (
+        <AttendanceModal
+          emp={markEmp}
+          existing={byDate[markDate]}
+          selectedDate={markDate}
+          onSave={() => { setMarkEmp(null); setMarkDate(null); onRefresh(); }}
+          onClose={() => { setMarkEmp(null); setMarkDate(null); }}
+        />
       )}
     </div>
   );
 }
 
-// ── Report Tab ────────────────────────────────────────────────────────────
-function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
-  const [reportMonth, setReportMonth] = useState(format(new Date(),'yyyy-MM'));
+function ReportTab({ employees, records, onRefresh, isEmployee = false }) {
+  const [reportMonth, setReportMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [deleting, setDeleting] = useState(false);
   const mo = reportMonth;
-  const moRecs = records.filter(r=>r.date.startsWith(mo));
+  const moRecs = records.filter(r => r.date.startsWith(mo));
 
-  const summary = employees.map(emp=>{
-    const recs = moRecs.filter(r=>r.empId===emp.id);
-    const present  = recs.filter(r=>[STATUS.PRESENT,STATUS.PRESENT_PERMISSION].includes(r.status)).length;
-    const halfDay  = recs.filter(r=>HALF_STATUSES.includes(r.status)).length;
-    const absent   = recs.filter(r=>r.status===STATUS.ABSENT).length;
-    const late     = recs.filter(r=>r.status===STATUS.LATE).length;
-    const perm     = recs.filter(r=>PERM_STATUSES.includes(r.status)).length;
+  const summary = employees.map(emp => {
+    const recs = moRecs.filter(r => r.empId === emp.id);
+    const present  = recs.filter(r => [STATUS.PRESENT, STATUS.PRESENT_PERMISSION].includes(r.status)).length;
+    const halfDay  = recs.filter(r => HALF_STATUSES.includes(r.status)).length;
+    const absent   = recs.filter(r => r.status === STATUS.ABSENT).length;
+    const late     = recs.filter(r => r.status === STATUS.LATE).length;
+    const perm     = recs.filter(r => PERM_STATUSES.includes(r.status)).length;
     const bal      = getPermBalance(emp.id, mo, records);
     const leavesUsed = getLeaveCount(recs);
-    return {emp, present, halfDay, absent, late, perm, bal, leavesUsed};
+    return { emp, present, halfDay, absent, late, perm, bal, leavesUsed };
   });
 
   async function handleDownloadAndDelete() {
@@ -844,29 +859,32 @@ function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
     setDeleting(true);
     try {
       const batch = writeBatch(db);
-      moRecs.forEach(r=>batch.delete(doc(db,'attendance',r.id)));
+      moRecs.forEach(r => batch.delete(doc(db, 'attendance', r.id)));
       await batch.commit();
       alert(`✅ Report downloaded and ${moRecs.length} records deleted`);
       onRefresh();
-    } catch(e) { alert('Error: '+e.message); }
+    } catch (e) { alert('Error: ' + e.message); }
     setDeleting(false);
   }
 
   return (
     <div>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'8px'}}>
-        <h1 style={{fontSize:'22px',fontWeight:'700'}}>{isEmployee ? 'My Report' : 'Monthly Report'}</h1>
-        <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-          <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{width:'160px'}}/>
-          <button className="btn btn-outline" onClick={()=>exportCSV(employees,records,mo)}>⬇ Download CSV</button>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: '1rem', flexWrap: 'wrap', gap: '8px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: '700' }}>{isEmployee ? 'My Report' : 'Monthly Report'}</h1>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{ width: '160px' }} />
+          <button className="btn btn-outline" onClick={() => exportCSV(employees, records, mo)}>⬇ Download CSV</button>
           {!isEmployee && (
             <button className="btn btn-danger" onClick={handleDownloadAndDelete} disabled={deleting}>
-              {deleting?'Deleting...':'⬇ Download + Delete Month'}
+              {deleting ? 'Deleting...' : '⬇ Download + Delete Month'}
             </button>
           )}
         </div>
       </div>
-      {!isEmployee && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
+      {!isEmployee && (
+        <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>
+      )}
       <div className="card">
         <div className="table-wrap">
           <table>
@@ -876,29 +894,30 @@ function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
               <th>Late Deduct</th><th>Perm Left</th><th>Total Leaves</th><th>Status</th>
             </tr></thead>
             <tbody>
-              {summary.map(({emp,present,halfDay,absent,late,perm,bal,leavesUsed},i)=>(
+              {summary.map(({ emp, present, halfDay, absent, late, perm, bal, leavesUsed }, i) => (
                 <tr key={emp.id}>
-                  <td style={{color:'#6b7280'}}>{i+1}</td>
-                  <td style={{fontWeight:600}}>{emp.name}</td>
-                  <td><ShiftBadge shiftId={emp.shiftId}/></td>
-                  <td style={{color:'#0e9f6e',fontWeight:600}}>{present}</td>
-                  <td style={{color:'#1e40af',fontWeight:600}}>{halfDay}</td>
-                  <td style={{color:'#e02424',fontWeight:600}}>{absent}</td>
-                  <td style={{color:'#7c3aed',fontWeight:600}}>{late}</td>
-                  <td style={{color:'#0891b2',fontWeight:600}}>{perm}</td>
-                  <td style={{fontSize:'13px'}}>{bal.permUsed} min</td>
-                  <td style={{fontSize:'13px',color:bal.lateDeduction>0?'#d97706':'#6b7280'}}>{bal.lateDeduction} min</td>
-                  <td><PermDisplay left={bal.left}/></td>
-                  <td style={{color:leavesUsed>=MAX_LEAVES?'#e02424':'#374151',fontWeight:leavesUsed>=MAX_LEAVES?700:400}}>
-                    {leavesUsed}/{MAX_LEAVES}{leavesUsed>=MAX_LEAVES&&' ⚠️'}
+                  <td style={{ color: '#6b7280' }}>{i + 1}</td>
+                  <td style={{ fontWeight: 600 }}>{emp.name}</td>
+                  <td><ShiftBadge shiftId={emp.shiftId} /></td>
+                  <td style={{ color: '#0e9f6e', fontWeight: 600 }}>{present}</td>
+                  <td style={{ color: '#1e40af', fontWeight: 600 }}>{halfDay}</td>
+                  <td style={{ color: '#e02424', fontWeight: 600 }}>{absent}</td>
+                  <td style={{ color: '#7c3aed', fontWeight: 600 }}>{late}</td>
+                  <td style={{ color: '#0891b2', fontWeight: 600 }}>{perm}</td>
+                  <td style={{ fontSize: '13px' }}>{bal.permUsed} min</td>
+                  <td style={{ fontSize: '13px', color: bal.lateDeduction > 0 ? '#d97706' : '#6b7280' }}>{bal.lateDeduction} min</td>
+                  <td><PermDisplay left={bal.left} /></td>
+                  <td style={{ color: leavesUsed >= MAX_LEAVES ? '#e02424' : '#374151', fontWeight: leavesUsed >= MAX_LEAVES ? 700 : 400 }}>
+                    {leavesUsed}/{MAX_LEAVES}{leavesUsed >= MAX_LEAVES && ' ⚠️'}
                   </td>
-                  <td>{leavesUsed>=MAX_LEAVES
-                    ?<span className="badge badge-absent">Exceeded</span>
-                    :<span className="badge badge-present">OK</span>}</td>
+                  <td>{leavesUsed >= MAX_LEAVES
+                    ? <span className="badge badge-absent">Exceeded</span>
+                    : <span className="badge badge-present">OK</span>}
+                  </td>
                 </tr>
               ))}
-              {employees.length===0&&(
-                <tr><td colSpan={13} style={{textAlign:'center',color:'#6b7280',padding:'2rem'}}>No records</td></tr>
+              {employees.length === 0 && (
+                <tr><td colSpan={13} style={{ textAlign: 'center', color: '#6b7280', padding: '2rem' }}>No records</td></tr>
               )}
             </tbody>
           </table>
@@ -908,21 +927,18 @@ function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [role, setRole] = useState(null);       // null | 'admin' | 'employee'
+  const [role, setRole] = useState(null);
   const [tab, setTab] = useState('today');
   const [employees, setEmployees] = useState([]);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [empSelf, setEmpSelf] = useState('');   // auto-set on employee login
+  const [empSelf, setEmpSelf] = useState('');
 
-  // onLogin now receives role, empId (null for admin), and preloaded employees
   function handleLogin(r, empId, preloadedEmployees) {
     setRole(r);
     setTab(r === 'admin' ? 'today' : 'calendar');
     setEmpSelf(empId || '');
-    // Use employees already fetched during login to avoid a second Firestore call
     if (preloadedEmployees) setEmployees(preloadedEmployees);
   }
 
@@ -938,23 +954,22 @@ export default function Home() {
     setLoading(true);
     try {
       const [empSnap, recSnap] = await Promise.all([
-        getDocs(query(collection(db,'employees'),orderBy('createdAt','asc'))),
-        getDocs(query(collection(db,'attendance'),orderBy('date','desc')))
+        getDocs(query(collection(db, 'employees'), orderBy('createdAt', 'asc'))),
+        getDocs(query(collection(db, 'attendance'), orderBy('date', 'desc')))
       ]);
-      setEmployees(empSnap.docs.map(d=>d.data()));
-      setRecords(recSnap.docs.map(d=>d.data()));
-    } catch(e) { console.error(e); }
+      setEmployees(empSnap.docs.map(d => d.data()));
+      setRecords(recSnap.docs.map(d => d.data()));
+    } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
 
-  useEffect(()=>{ if(role) fetchData(); },[fetchData, role]);
+  useEffect(() => { if (role) fetchData(); }, [fetchData, role]);
 
-  if (!role) return <LoginScreen onLogin={handleLogin}/>;
+  if (!role) return <LoginScreen onLogin={handleLogin} />;
 
-  // Employee sees only their own data — filtered by their empSelf id
   const visibleRecords   = role === 'admin' ? records   : records.filter(r => r.empId === empSelf);
   const visibleEmployees = role === 'admin' ? employees : employees.filter(e => e.id === empSelf);
-  const empName = role === 'employee' ? employees.find(e=>e.id===empSelf)?.name : null;
+  const empName = role === 'employee' ? employees.find(e => e.id === empSelf)?.name : null;
 
   return (
     <>
@@ -963,24 +978,37 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
       </Head>
       <Nav tab={tab} setTab={setTab} role={role} empName={empName} onLogout={handleLogout}/>
-      <div className="container" style={{padding:'1.5rem 1rem'}}>
+      <div className="container" style={{ padding: '1.5rem 1rem' }}>
         {loading ? (
-          <div style={{textAlign:'center',padding:'4rem',color:'#6b7280'}}>Loading...</div>
+          <div style={{ textAlign: 'center', padding: '4rem', color: '#6b7280' }}>Loading...</div>
         ) : (
           <>
             {role === 'admin' && (
               <>
-                {tab==='today'    && <TodayTab     employees={employees}        records={records}        onRefresh={fetchData}/>}
-                {tab==='employees'&& <EmployeesTab employees={employees}        records={records}        onRefresh={fetchData}/>}
-                {tab==='calendar' && <CalendarTab  employees={employees}        records={records}/>}
-                {tab==='report'   && <ReportTab    employees={employees}        records={records}        onRefresh={fetchData}/>}
+                {tab === 'today'     && <TodayTab     employees={employees} records={records} onRefresh={fetchData}/>}
+                {tab === 'employees' && <EmployeesTab employees={employees} records={records} onRefresh={fetchData}/>}
+                {tab === 'calendar'  && <CalendarTab  employees={employees} records={records} onRefresh={fetchData}/>}
+                {tab === 'report'    && <ReportTab    employees={employees} records={records} onRefresh={fetchData}/>}
               </>
             )}
             {role === 'employee' && (
               <>
-                {/* No name picker — empSelf is already set from login */}
-                {tab==='calendar' && <CalendarTab  employees={visibleEmployees} records={visibleRecords} defaultEmp={empSelf}/>}
-                {tab==='report'   && <ReportTab    employees={visibleEmployees} records={visibleRecords} onRefresh={fetchData} isEmployee={true}/>}
+                {tab === 'calendar' && (
+                  <CalendarTab
+                    employees={visibleEmployees}
+                    records={visibleRecords}
+                    defaultEmp={empSelf}
+                    onRefresh={fetchData}
+                  />
+                )}
+                {tab === 'report' && (
+                  <ReportTab
+                    employees={visibleEmployees}
+                    records={visibleRecords}
+                    onRefresh={fetchData}
+                    isEmployee={true}
+                  />
+                )}
               </>
             )}
           </>
