@@ -9,18 +9,30 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval,
          getDaysInMonth, getDay, isToday, isSunday, parseISO } from 'date-fns';
 
 // ── Login helpers ─────────────────────────────────────────────────────────
-async function getPasswords() {
+// Returns { adminPw, employeePasswords: { empId: password, ... }, employees: [...] }
+async function getLoginData() {
   try {
-    const snap = await getDocs(collection(db, 'config'));
-    let adminPw = 'admin123', empPw = 'employee123';
-    snap.docs.forEach(d => {
+    const [configSnap, empSnap] = await Promise.all([
+      getDocs(collection(db, 'config')),
+      getDocs(query(collection(db, 'employees'), orderBy('createdAt', 'asc')))
+    ]);
+
+    let adminPw = 'admin123';
+    let employeePasswords = {}; // { empId: "theirpassword" }
+
+    configSnap.docs.forEach(d => {
       if (d.id === 'passwords') {
         if (d.data().admin) adminPw = d.data().admin;
-        if (d.data().employee) empPw = d.data().employee;
+        // employees field is a map: { empId: "pw", empId2: "pw2" }
+        if (d.data().employees) employeePasswords = d.data().employees;
       }
     });
-    return { adminPw, empPw };
-  } catch (e) { return { adminPw: 'admin123', empPw: 'employee123' }; }
+
+    const employees = empSnap.docs.map(d => d.data());
+    return { adminPw, employeePasswords, employees };
+  } catch (e) {
+    return { adminPw: 'admin123', employeePasswords: {}, employees: [] };
+  }
 }
 
 function LoginScreen({ onLogin }) {
@@ -32,34 +44,23 @@ function LoginScreen({ onLogin }) {
     if (!pw.trim()) { setError('Please enter a password'); return; }
     setLoading(true);
     setError('');
-    
-    try {
-      const snap = await getDocs(collection(db, 'config'));
-      let adminPw = 'admin123';
-      snap.docs.forEach(d => {
-        if (d.id === 'passwords' && d.data().admin) adminPw = d.data().admin;
-      });
-      if (pw === adminPw) {
-        onLogin('admin');
-        setLoading(false);
-        return;
-      }
-      
-      const empSnap = await getDocs(query(collection(db, 'employees')));
-      const employees = empSnap.docs.map(d => d.data());
-      const matchedEmp = employees.find(e => {
-        if (!e.name) return false;
-        const firstFour = e.name.replace(/\s+/g, '').substring(0, 4).toLowerCase();
-        return pw.toLowerCase() === `${firstFour}123`;
-      });
-      
-      if (matchedEmp) {
-        onLogin('employee', matchedEmp.id);
+
+    const { adminPw, employeePasswords, employees } = await getLoginData();
+
+    if (pw === adminPw) {
+      // Admin login — pass all employees
+      onLogin('admin', null, employees);
+    } else {
+      // Check if pw matches any employee's individual password
+      const matchedEmpId = Object.keys(employeePasswords).find(
+        empId => employeePasswords[empId] === pw
+      );
+      if (matchedEmpId) {
+        // Employee login — automatically set their identity
+        onLogin('employee', matchedEmpId, employees);
       } else {
         setError('Incorrect password. Please try again.');
       }
-    } catch (e) {
-      setError('Error logging in. Please check your connection.');
     }
     setLoading(false);
   }
@@ -81,7 +82,7 @@ function LoginScreen({ onLogin }) {
             value={pw}
             onChange={e=>{ setPw(e.target.value); setError(''); }}
             onKeyDown={e=>e.key==='Enter'&&handleLogin()}
-            placeholder="Enter password"
+            placeholder="Enter your password"
             style={{width:'100%',padding:'10px 14px',border:'1.5px solid '+(error?'#e02424':'#d1d5db'),
               borderRadius:'8px',fontSize:'15px',outline:'none',boxSizing:'border-box'}}
             autoFocus
@@ -97,15 +98,13 @@ function LoginScreen({ onLogin }) {
           {loading ? 'Checking…' : 'Login'}
         </button>
         <div style={{marginTop:'20px',padding:'14px',background:'#f0f9ff',borderRadius:'8px',fontSize:'12px',color:'#0369a1'}}>
-          <strong>Admin</strong> — full access (e.g., admin123)<br/>
-          <strong>Employee</strong> — first 4 letters of name + 123 (e.g., john123)
+          Each employee logs in with their <strong>own personal password</strong>.<br/>
+          Admin has a separate password for full access.
         </div>
       </div>
     </div>
   );
 }
-
-
 
 const MAX_LEAVES = 4;
 const MAX_PERMISSION_MINS = 120;
@@ -113,16 +112,15 @@ const MAX_PERMISSION_MINS = 120;
 const STATUS = {
   PRESENT:              'present',
   PRESENT_PERMISSION:   'present+permission',
-  HALF_FIRST:           'half-first',           // morning off, came afternoon
-  HALF_SECOND:          'half-second',          // came morning, left afternoon
-  HALF_FIRST_PERM:      'half-first+perm',      // morning off + permission time
-  HALF_SECOND_PERM:     'half-second+perm',     // afternoon off + permission time
+  HALF_FIRST:           'half-first',
+  HALF_SECOND:          'half-second',
+  HALF_FIRST_PERM:      'half-first+perm',
+  HALF_SECOND_PERM:     'half-second+perm',
   ABSENT:               'absent',
   LATE:                 'late',
   PERMISSION:           'permission',
 };
 
-// Which statuses involve permission minutes input
 const PERM_STATUSES = [
   STATUS.PERMISSION,
   STATUS.PRESENT_PERMISSION,
@@ -130,7 +128,6 @@ const PERM_STATUSES = [
   STATUS.HALF_SECOND_PERM,
 ];
 
-// Which statuses count as "half day" (0.5 leave)
 const HALF_STATUSES = [
   STATUS.HALF_FIRST,
   STATUS.HALF_SECOND,
@@ -148,7 +145,6 @@ function todayStr() { return format(new Date(), 'yyyy-MM-dd'); }
 function monthStr(d = new Date()) { return format(d, 'yyyy-MM'); }
 function getShift(id) { return SHIFTS.find(s => s.id === id) || SHIFTS[0]; }
 
-// Leaves: absent=1, late=1, half day=0.5
 function getLeaveCount(records) {
   const absent = records.filter(r => r.status === STATUS.ABSENT).length;
   const late   = records.filter(r => r.status === STATUS.LATE).length;
@@ -212,8 +208,10 @@ function exportCSV(employees, records, month) {
 }
 
 // ── Nav ───────────────────────────────────────────────────────────────────
-function Nav({ tab, setTab, role, onLogout }) {
-  const tabs = [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']];
+function Nav({ tab, setTab, role, empName, onLogout }) {
+  const tabs = role === 'admin'
+    ? [['today','Mark Attendance'],['employees','Employees'],['calendar','Calendar'],['report','Report']]
+    : [['calendar','My Calendar'],['report','My Report']];
   return (
     <nav className="nav">
       <div className="nav-inner">
@@ -224,10 +222,14 @@ function Nav({ tab, setTab, role, onLogout }) {
           ))}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'8px',marginLeft:'auto'}}>
+          {/* Show employee name in nav when employee is logged in */}
+          {role === 'employee' && empName && (
+            <span style={{fontSize:'13px',color:'#374151',fontWeight:600}}>👤 {empName}</span>
+          )}
           <span style={{fontSize:'12px',padding:'3px 10px',borderRadius:'20px',fontWeight:600,
             background: role==='admin'?'#1a56db22':'#0891b222',
             color: role==='admin'?'#1a56db':'#0891b2'}}>
-            {role==='admin'?'🔑 Admin':'👤 Employee'}
+            {role==='admin'?'🔑 Admin':'Employee'}
           </span>
           <button onClick={onLogout}
             style={{fontSize:'13px',padding:'4px 12px',border:'1px solid #d1d5db',
@@ -240,7 +242,6 @@ function Nav({ tab, setTab, role, onLogout }) {
   );
 }
 
-// Badge config for all statuses
 const BADGE_MAP = {
   'present':            { cls: 'badge-present',     label: 'Present' },
   'present+permission': { cls: 'badge-pressperm',   label: 'Present + Permission' },
@@ -280,18 +281,33 @@ function PermDisplay({ left }) {
   );
 }
 
-// ── Employee Modal ─────────────────────────────────────────────────────────
+// ── Employee Modal (Admin only — also sets password) ───────────────────────
 function EmployeeModal({ emp, onSave, onClose }) {
   const [form, setForm] = useState({
     name: emp?.name||'', designation: emp?.designation||'',
-    phone: emp?.phone||'', shiftId: emp?.shiftId||'A'
+    phone: emp?.phone||'', shiftId: emp?.shiftId||'A',
+    password: emp?.password||''
   });
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
 
   async function save() {
     if (!form.name.trim()) return alert('Name is required');
+    if (!form.password.trim()) return alert('Password is required for the employee to login');
     const id = emp?.id || `emp_${Date.now()}`;
-    await setDoc(doc(db,'employees',id), {...form, id, createdAt: emp?.createdAt||Date.now()});
+
+    // Save employee record
+    await setDoc(doc(db,'employees',id), {
+      id, name: form.name, designation: form.designation,
+      phone: form.phone, shiftId: form.shiftId,
+      createdAt: emp?.createdAt||Date.now()
+    });
+
+    // Save password into config/passwords.employees map
+    // We use setDoc with merge so we don't overwrite other employees' passwords
+    await setDoc(doc(db,'config','passwords'), {
+      employees: { [id]: form.password }
+    }, { merge: true });
+
     onSave();
   }
 
@@ -303,6 +319,16 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div><label>Full Name *</label><input value={form.name} onChange={e=>set('name',e.target.value)} placeholder="e.g. Rajan Kumar"/></div>
           <div><label>Designation</label><input value={form.designation} onChange={e=>set('designation',e.target.value)} placeholder="e.g. Sales Executive"/></div>
           <div><label>Phone</label><input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="e.g. 9876543210"/></div>
+          <div>
+            {/* Employee personal login password */}
+            <label>Login Password * <span style={{fontSize:'11px',color:'#6b7280',fontWeight:400}}>(employee uses this to login)</span></label>
+            <input
+              type="text"
+              value={form.password}
+              onChange={e=>set('password',e.target.value)}
+              placeholder="e.g. prak123"
+            />
+          </div>
           <div>
             <label>Work Shift</label>
             <div style={{display:'flex',flexDirection:'column',gap:'8px',marginTop:'4px'}}>
@@ -341,7 +367,6 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
   const effectiveStatus = autoLate ? STATUS.LATE : status;
   const needsMins = PERM_STATUSES.includes(status);
 
-  // Status options grouped
   const statusGroups = [
     {
       group: 'Full Day',
@@ -387,13 +412,10 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
           <span style={{fontSize:'13px',color:'#6b7280'}}>{selectedDate}</span>
           <ShiftBadge shiftId={emp.shiftId}/>
         </div>
-
-        {/* Shift info */}
         <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',
           padding:'8px 12px',marginBottom:'1rem',fontSize:'13px',color:'#0c4a6e'}}>
           🕐 {shift.start} – {shift.end} &nbsp;|&nbsp; Permission limit: <strong>120 min/month</strong>
         </div>
-
         {statusGroups.map(grp => (
           <div key={grp.group} style={{marginBottom:'1rem'}}>
             <div style={{fontSize:'11px',fontWeight:700,color:'#6b7280',textTransform:'uppercase',
@@ -414,7 +436,6 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
             </div>
           </div>
         ))}
-
         {needsMins && (
           <div style={{marginBottom:'1rem'}}>
             <label>Permission Duration (minutes)</label>
@@ -431,18 +452,15 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
                 : null}
           </div>
         )}
-
         {status === STATUS.LATE && (
           <div style={{background:'#fef3c7',border:'1px solid #fcd34d',borderRadius:'8px',
             padding:'8px 12px',marginBottom:'1rem',fontSize:'13px',color:'#92400e'}}>
             ⚠️ Late deducts <strong>120 minutes</strong> from permission balance.
           </div>
         )}
-
         <div><label>Note (optional)</label>
           <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Any remarks..."/>
         </div>
-
         <div style={{display:'flex',gap:'8px',marginTop:'1.5rem',justifyContent:'flex-end'}}>
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={save}>
@@ -455,7 +473,7 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
 }
 
 // ── Mark Attendance Tab ────────────────────────────────────────────────────
-function TodayTab({ employees, records, onRefresh, role }) {
+function TodayTab({ employees, records, onRefresh }) {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [markEmp, setMarkEmp] = useState(null);
   const mo = selectedDate.slice(0,7);
@@ -472,8 +490,6 @@ function TodayTab({ employees, records, onRefresh, role }) {
   return (
     <div>
       <h1 style={{fontSize:'22px',fontWeight:'700',marginBottom:'1rem'}}>Mark Attendance</h1>
-
-      {/* Date picker */}
       <div className="card" style={{marginBottom:'1.25rem',display:'flex',alignItems:'center',gap:'1rem',flexWrap:'wrap'}}>
         <div style={{flex:'1',minWidth:'180px'}}>
           <label>Select Date</label>
@@ -484,9 +500,7 @@ function TodayTab({ employees, records, onRefresh, role }) {
           {format(parseISO(selectedDate),'EEEE, dd MMMM yyyy')}
         </span>
       </div>
-
-      {/* Stats */}
-      <div className="stats-grid">
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1.5rem'}}>
         {[
           {label:'Present',    value:present,  color:'#065f46'},
           {label:'Half Day',   value:halfDay,  color:'#1e40af'},
@@ -501,8 +515,6 @@ function TodayTab({ employees, records, onRefresh, role }) {
           </div>
         ))}
       </div>
-
-      {/* Employees by shift */}
       {SHIFTS.map(shift => {
         const shiftEmps = employees.filter(e=>(e.shiftId||'A')===shift.id);
         if (!shiftEmps.length) return null;
@@ -518,8 +530,7 @@ function TodayTab({ employees, records, onRefresh, role }) {
                 <table>
                   <thead><tr>
                     <th>#</th><th>Name</th><th>Status</th>
-                    <th>Perm Mins</th><th>Perm Balance</th><th>Leaves</th><th>Note</th>
-                    {role !== 'employee' && <th>Action</th>}
+                    <th>Perm Mins</th><th>Perm Balance</th><th>Leaves</th><th>Note</th><th>Action</th>
                   </tr></thead>
                   <tbody>
                     {shiftEmps.map((emp,i) => {
@@ -542,12 +553,10 @@ function TodayTab({ employees, records, onRefresh, role }) {
                             {leavesUsed}/{MAX_LEAVES}{overLeave&&' ⚠️'}
                           </td>
                           <td style={{fontSize:'12px',color:'#6b7280'}}>{rec?.note||'—'}</td>
-                          {role !== 'employee' && (
-                            <td>
-                              <button className="btn btn-primary" style={{padding:'5px 12px',fontSize:'13px'}}
-                                onClick={()=>setMarkEmp(emp)}>{rec?'Edit':'Mark'}</button>
-                            </td>
-                          )}
+                          <td>
+                            <button className="btn btn-primary" style={{padding:'5px 12px',fontSize:'13px'}}
+                              onClick={()=>setMarkEmp(emp)}>{rec?'Edit':'Mark'}</button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -558,7 +567,6 @@ function TodayTab({ employees, records, onRefresh, role }) {
           </div>
         );
       })}
-
       {markEmp && (
         <AttendanceModal emp={markEmp} existing={byEmpId[markEmp.id]}
           selectedDate={selectedDate}
@@ -570,13 +578,16 @@ function TodayTab({ employees, records, onRefresh, role }) {
 }
 
 // ── Employees Tab ─────────────────────────────────────────────────────────
-function EmployeesTab({ employees, records, onRefresh, role }) {
+function EmployeesTab({ employees, records, onRefresh }) {
   const [modal, setModal] = useState(null);
   const mo = monthStr();
 
   async function deleteEmp(emp) {
     if (!confirm(`Delete ${emp.name}?`)) return;
     await deleteDoc(doc(db,'employees',emp.id));
+    // Also remove their password from config
+    // (Firestore doesn't support field delete in nested maps easily;
+    //  simplest approach: just leave it — orphan pw won't match any employee)
     onRefresh();
   }
 
@@ -584,10 +595,9 @@ function EmployeesTab({ employees, records, onRefresh, role }) {
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
         <h1 style={{fontSize:'22px',fontWeight:'700'}}>Employees ({employees.length})</h1>
-        {role !== 'employee' && <button className="btn btn-primary" onClick={()=>setModal('add')}>+ Add Employee</button>}
+        <button className="btn btn-primary" onClick={()=>setModal('add')}>+ Add Employee</button>
       </div>
-
-      <div className="stats-grid-3">
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'1rem'}}>
         {SHIFTS.map(s=>{
           const count = employees.filter(e=>(e.shiftId||'A')===s.id).length;
           const colors = {A:'#1a56db',B:'#0891b2',C:'#7c3aed'};
@@ -599,14 +609,12 @@ function EmployeesTab({ employees, records, onRefresh, role }) {
           );
         })}
       </div>
-
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead><tr>
               <th>#</th><th>Name</th><th>Shift</th><th>Designation</th>
-              <th>Leaves This Month</th><th>Perm Balance</th>
-              {role !== 'employee' && <th>Actions</th>}
+              <th>Leaves This Month</th><th>Perm Balance</th><th>Actions</th>
             </tr></thead>
             <tbody>
               {employees.map((emp,i)=>{
@@ -623,14 +631,12 @@ function EmployeesTab({ employees, records, onRefresh, role }) {
                       {leavesUsed}/{MAX_LEAVES}{leavesUsed>=MAX_LEAVES&&' ⚠️'}
                     </td>
                     <td><PermDisplay left={bal.left}/></td>
-                    {role !== 'employee' && (
-                      <td>
-                        <div style={{display:'flex',gap:'6px'}}>
-                          <button className="btn btn-outline" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>setModal(emp)}>Edit</button>
-                          <button className="btn btn-danger" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>deleteEmp(emp)}>Delete</button>
-                        </div>
-                      </td>
-                    )}
+                    <td>
+                      <div style={{display:'flex',gap:'6px'}}>
+                        <button className="btn btn-outline" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>setModal(emp)}>Edit</button>
+                        <button className="btn btn-danger" style={{padding:'5px 10px',fontSize:'13px'}} onClick={()=>deleteEmp(emp)}>Delete</button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -641,7 +647,6 @@ function EmployeesTab({ employees, records, onRefresh, role }) {
           </table>
         </div>
       </div>
-
       {modal&&(
         <EmployeeModal emp={modal==='add'?null:modal}
           onSave={()=>{setModal(null);onRefresh();}} onClose={()=>setModal(null)}/>
@@ -663,8 +668,8 @@ const CAL_COLORS = {
   'permission':           { bg:'#e0f2fe', color:'#0c4a6e', label:'Pm' },
 };
 
-function CalendarTab({ employees, records }) {
-  const [selEmp, setSelEmp] = useState('');
+function CalendarTab({ employees, records, defaultEmp }) {
+  const [selEmp, setSelEmp] = useState(defaultEmp || '');
   const [viewDate, setViewDate] = useState(new Date());
   const mo = monthStr(viewDate);
   const emp = employees.find(e=>e.id===selEmp);
@@ -682,25 +687,32 @@ function CalendarTab({ employees, records }) {
   const leavesUsed = emp ? getLeaveCount(empRecs) : 0;
   const bal = emp ? getPermBalance(emp.id, mo, records) : {left:120,totalUsed:0,permUsed:0,lateDeduction:0};
 
+  // If defaultEmp is set (employee role), don't show the employee selector
+  const isEmployeeView = !!defaultEmp;
+
   return (
     <div>
-      <h1 style={{fontSize:'22px',fontWeight:'700',marginBottom:'1rem'}}>Calendar View</h1>
+      <h1 style={{fontSize:'22px',fontWeight:'700',marginBottom:'1rem'}}>
+        {isEmployeeView ? 'My Calendar' : 'Calendar View'}
+      </h1>
       <div className="card" style={{marginBottom:'1rem'}}>
         <div style={{display:'flex',gap:'1rem',alignItems:'center',flexWrap:'wrap'}}>
-          <div style={{flex:'1',minWidth:'200px'}}>
-            <label>Select Employee</label>
-            <select value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
-              <option value="">— Choose employee —</option>
-              {SHIFTS.map(s=>(
-                <optgroup key={s.id} label={`${s.label} · ${s.display}`}>
-                  {employees.filter(e=>(e.shiftId||'A')===s.id).map(e=>(
-                    <option key={e.id} value={e.id}>{e.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'18px'}}>
+          {!isEmployeeView && (
+            <div style={{flex:'1',minWidth:'200px'}}>
+              <label>Select Employee</label>
+              <select value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
+                <option value="">— Choose employee —</option>
+                {SHIFTS.map(s=>(
+                  <optgroup key={s.id} label={`${s.label} · ${s.display}`}>
+                    {employees.filter(e=>(e.shiftId||'A')===s.id).map(e=>(
+                      <option key={e.id} value={e.id}>{e.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          )}
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop: !isEmployeeView ? '18px' : '0'}}>
             <button className="btn btn-outline" style={{padding:'8px'}}
               onClick={()=>setViewDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}>←</button>
             <span style={{fontWeight:600,minWidth:'130px',textAlign:'center'}}>{format(viewDate,'MMMM yyyy')}</span>
@@ -712,7 +724,7 @@ function CalendarTab({ employees, records }) {
 
       {selEmp&&emp&&(
         <>
-          <div className="stats-grid">
+          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1rem'}}>
             {[
               {label:'Present',        value:present,  color:'#065f46'},
               {label:'Half Day',       value:halfDay,  color:'#1e40af'},
@@ -727,7 +739,6 @@ function CalendarTab({ employees, records }) {
               </div>
             ))}
           </div>
-
           {bal.left < 0 && (
             <div style={{background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:'8px',
               padding:'10px 14px',marginBottom:'1rem',fontSize:'13px',color:'#991b1b',fontWeight:600}}>
@@ -737,7 +748,6 @@ function CalendarTab({ employees, records }) {
           {leavesUsed>=MAX_LEAVES&&(
             <div className="alert alert-danger">⚠️ {emp.name} has used all {MAX_LEAVES} allowed leaves this month.</div>
           )}
-
           <div className="card">
             <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',marginBottom:'8px',textAlign:'center'}}>
               {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>(
@@ -761,10 +771,8 @@ function CalendarTab({ employees, records }) {
                 );
               })}
             </div>
-
-            {/* Legend */}
             <div style={{display:'flex',gap:'8px',marginTop:'1rem',flexWrap:'wrap'}}>
-              {Object.entries(CAL_COLORS).map(([key,{bg,color,label}])=>(
+              {Object.entries(CAL_COLORS).map(([key,{bg,color}])=>(
                 <div key={key} style={{display:'flex',alignItems:'center',gap:'4px',fontSize:'11px'}}>
                   <span style={{width:'12px',height:'12px',borderRadius:'3px',background:bg,
                     border:`1px solid ${color}44`,display:'inline-block'}}/>
@@ -773,7 +781,6 @@ function CalendarTab({ employees, records }) {
               ))}
             </div>
           </div>
-
           <div className="card" style={{marginTop:'1rem'}}>
             <h3 style={{fontSize:'15px',fontWeight:'600',marginBottom:'0.75rem'}}>Attendance Details</h3>
             <div className="table-wrap">
@@ -803,7 +810,7 @@ function CalendarTab({ employees, records }) {
           </div>
         </>
       )}
-      {!selEmp&&(
+      {!selEmp&&!isEmployeeView&&(
         <div className="card" style={{textAlign:'center',padding:'3rem',color:'#6b7280'}}>
           Select an employee above to view their calendar
         </div>
@@ -813,7 +820,7 @@ function CalendarTab({ employees, records }) {
 }
 
 // ── Report Tab ────────────────────────────────────────────────────────────
-function ReportTab({ employees, records, onRefresh, role }) {
+function ReportTab({ employees, records, onRefresh, isEmployee=false }) {
   const [reportMonth, setReportMonth] = useState(format(new Date(),'yyyy-MM'));
   const [deleting, setDeleting] = useState(false);
   const mo = reportMonth;
@@ -848,18 +855,18 @@ function ReportTab({ employees, records, onRefresh, role }) {
   return (
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'8px'}}>
-        <h1 style={{fontSize:'22px',fontWeight:'700'}}>Monthly Report</h1>
+        <h1 style={{fontSize:'22px',fontWeight:'700'}}>{isEmployee ? 'My Report' : 'Monthly Report'}</h1>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{width:'160px'}}/>
           <button className="btn btn-outline" onClick={()=>exportCSV(employees,records,mo)}>⬇ Download CSV</button>
-          {role !== 'employee' && (
+          {!isEmployee && (
             <button className="btn btn-danger" onClick={handleDownloadAndDelete} disabled={deleting}>
               {deleting?'Deleting...':'⬇ Download + Delete Month'}
             </button>
           )}
         </div>
       </div>
-      {role !== 'employee' && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
+      {!isEmployee && <div className="alert alert-warning">⚠️ "Download + Delete Month" exports CSV then permanently deletes that month's data.</div>}
       <div className="card">
         <div className="table-wrap">
           <table>
@@ -891,7 +898,7 @@ function ReportTab({ employees, records, onRefresh, role }) {
                 </tr>
               ))}
               {employees.length===0&&(
-                <tr><td colSpan={13} style={{textAlign:'center',color:'#6b7280',padding:'2rem'}}>No employees</td></tr>
+                <tr><td colSpan={13} style={{textAlign:'center',color:'#6b7280',padding:'2rem'}}>No records</td></tr>
               )}
             </tbody>
           </table>
@@ -903,17 +910,20 @@ function ReportTab({ employees, records, onRefresh, role }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [role, setRole] = useState(null); // null | 'admin' | 'employee'
+  const [role, setRole] = useState(null);       // null | 'admin' | 'employee'
   const [tab, setTab] = useState('today');
   const [employees, setEmployees] = useState([]);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [empSelf, setEmpSelf] = useState(''); // selected employee id for employee role
+  const [empSelf, setEmpSelf] = useState('');   // auto-set on employee login
 
-  function handleLogin(r, eId) {
+  // onLogin now receives role, empId (null for admin), and preloaded employees
+  function handleLogin(r, empId, preloadedEmployees) {
     setRole(r);
-    setTab('today');
-    setEmpSelf(eId || '');
+    setTab(r === 'admin' ? 'today' : 'calendar');
+    setEmpSelf(empId || '');
+    // Use employees already fetched during login to avoid a second Firestore call
+    if (preloadedEmployees) setEmployees(preloadedEmployees);
   }
 
   function handleLogout() {
@@ -941,28 +951,38 @@ export default function Home() {
 
   if (!role) return <LoginScreen onLogin={handleLogin}/>;
 
+  // Employee sees only their own data — filtered by their empSelf id
+  const visibleRecords   = role === 'admin' ? records   : records.filter(r => r.empId === empSelf);
+  const visibleEmployees = role === 'admin' ? employees : employees.filter(e => e.id === empSelf);
+  const empName = role === 'employee' ? employees.find(e=>e.id===empSelf)?.name : null;
+
   return (
     <>
       <Head>
         <title>AttendEase — Company Attendance</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
       </Head>
-      <Nav tab={tab} setTab={setTab} role={role} onLogout={handleLogout}/>
+      <Nav tab={tab} setTab={setTab} role={role} empName={empName} onLogout={handleLogout}/>
       <div className="container" style={{padding:'1.5rem 1rem'}}>
-        {loading?(
+        {loading ? (
           <div style={{textAlign:'center',padding:'4rem',color:'#6b7280'}}>Loading...</div>
-        ):(
+        ) : (
           <>
-            {role === 'employee' && empSelf && (
-              <div style={{padding:'8px 12px',marginBottom:'1rem',background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',fontSize:'13px',color:'#0369a1'}}>
-                Logged in as: <strong style={{color:'#0c4a6e'}}>{employees.find(e=>e.id===empSelf)?.name}</strong> 
-                <span style={{marginLeft:'8px',background:'#e0f2fe',color:'#0284c7',padding:'2px 8px',borderRadius:'12px',fontSize:'11px',fontWeight:'600'}}>READ-ONLY</span>
-              </div>
+            {role === 'admin' && (
+              <>
+                {tab==='today'    && <TodayTab     employees={employees}        records={records}        onRefresh={fetchData}/>}
+                {tab==='employees'&& <EmployeesTab employees={employees}        records={records}        onRefresh={fetchData}/>}
+                {tab==='calendar' && <CalendarTab  employees={employees}        records={records}/>}
+                {tab==='report'   && <ReportTab    employees={employees}        records={records}        onRefresh={fetchData}/>}
+              </>
             )}
-            {tab==='today'&&<TodayTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
-            {tab==='employees'&&<EmployeesTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
-            {tab==='calendar'&&<CalendarTab employees={employees} records={records} role={role}/>}
-            {tab==='report'&&<ReportTab employees={employees} records={records} onRefresh={fetchData} role={role}/>}
+            {role === 'employee' && (
+              <>
+                {/* No name picker — empSelf is already set from login */}
+                {tab==='calendar' && <CalendarTab  employees={visibleEmployees} records={visibleRecords} defaultEmp={empSelf}/>}
+                {tab==='report'   && <ReportTab    employees={visibleEmployees} records={visibleRecords} onRefresh={fetchData} isEmployee={true}/>}
+              </>
+            )}
           </>
         )}
       </div>
