@@ -470,7 +470,7 @@ function TodayTab({ employees, records, onRefresh }) {
           {format(parseISO(selectedDate),'EEEE, dd MMMM yyyy')}
         </span>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'10px',marginBottom:'1.5rem'}}>
+      <div className="stats-grid">
         {[
           {label:'Present',    value:present,  color:'#065f46'},
           {label:'Half Day',   value:halfDay,  color:'#1e40af'},
@@ -563,7 +563,7 @@ function EmployeesTab({ employees, records, onRefresh }) {
         <h1 style={{fontSize:'22px',fontWeight:'700'}}>Employees ({employees.length})</h1>
         <button className="btn btn-primary" onClick={()=>setModal('add')}>+ Add Employee</button>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'1rem'}}>
+      <div className="stats-grid" style={{marginBottom:'1rem'}}>
         {SHIFTS.map(s=>{
           const count = employees.filter(e=>(e.shiftId||'A')===s.id).length;
           const colors = {A:'#1a56db',B:'#0891b2',C:'#7c3aed'};
@@ -701,7 +701,7 @@ function CalendarTab({ employees, records, defaultEmp, onRefresh }) {
 
       {selEmp && emp && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: '10px', marginBottom: '1rem' }}>
+          <div className="stats-grid" style={{ marginBottom: '1rem' }}>
             {[
               { label: 'Present',                 value: present,    color: '#065f46' },
               { label: 'Half Day',                value: halfDay,    color: '#1e40af' },
