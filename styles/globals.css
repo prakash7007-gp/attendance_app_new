@@ -238,3 +238,56 @@ tr:hover td { background: #f9fafb; }
 .cal-day.half-second       { background: #bfdbfe; color: #1e40af; }
 .cal-day.half-first-perm   { background: #ede9fe; color: #5b21b6; }
 .cal-day.half-second-perm  { background: #ddd6fe; color: #5b21b6; }
+
+/* ── Mobile Responsive ─────────────────────────────────────── */
+.desktop-only { display: flex !important; }
+.mobile-only  { display: none !important; }
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .mobile-only  { display: block !important; }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .stat-card { padding: 0.65rem 0.5rem; }
+  .stat-card .value { font-size: 22px !important; }
+  .stat-card .label { font-size: 10px; }
+
+  .container { padding: 0.75rem 0.5rem !important; }
+
+  .card { padding: 0.75rem; }
+
+  .nav-inner { height: 50px; padding: 0 0.75rem; }
+  .nav-brand  { font-size: 16px; }
+
+  table { font-size: 12px; }
+  th, td { padding: 7px 8px; }
+
+  .modal { padding: 1.25rem 1rem; }
+  .modal h2 { font-size: 16px; }
+
+  .cal-day { font-size: 11px; min-height: 32px; }
+
+  h1 { font-size: 18px !important; }
+  h3 { font-size: 13px !important; }
+
+  .btn { padding: 6px 12px; font-size: 13px; }
+}
+
+@media (max-width: 480px) {
+  .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .stat-card .value { font-size: 18px !important; }
+  th, td { padding: 6px; }
+  .badge { font-size: 10px; padding: 2px 6px; }
+  .cal-day { font-size: 10px; min-height: 28px; }
+}
