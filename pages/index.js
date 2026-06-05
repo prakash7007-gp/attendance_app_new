@@ -652,7 +652,7 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
   function handleDayClick(day){
     if(!emp)return;
     const ds=format(day,'yyyy-MM-dd');
-    if(isSunday(day)||ds>todayStr())return;
+    if(ds>todayStr())return;
     setMarkDate(ds);setMarkEmp(emp);
   }
 
@@ -770,8 +770,8 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
                 const rec=byDate[ds];
                 const sun=isSunday(day);
                 const isFuture=ds>todayStr();
-                const cal=rec&&!sun?CAL_COLORS[rec.status]:null;
-                const clickable=isEmployeeView&&!sun&&!isFuture;
+                const cal=rec?CAL_COLORS[rec.status]:null;
+                const clickable=isEmployeeView&&!isFuture;
                 const hasPerm=rec&&PERM_STATUSES.includes(rec.status)&&rec.permMins>0;
                 const dayStyle = {
                   position:'relative',
