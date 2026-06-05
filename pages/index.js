@@ -773,17 +773,19 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
                 const cal=rec&&!sun?CAL_COLORS[rec.status]:null;
                 const clickable=isEmployeeView&&!sun&&!isFuture;
                 const hasPerm=rec&&PERM_STATUSES.includes(rec.status)&&rec.permMins>0;
+                const dayStyle = {
+                  position:'relative',
+                  background: cal ? cal.bg : undefined,
+                  color: cal ? cal.color : undefined,
+                  border: cal ? (isToday(day)?'2px solid #1a56db':'1px solid transparent') : undefined,
+                  cursor: clickable ? 'pointer' : undefined,
+                };
                 return(
                   <div key={ds}
                     className={`cal-day${isToday(day)?' today':''}${sun?' sunday':''}`}
                     onClick={()=>clickable&&handleDayClick(day)}
-                    style={{
-                      ...(cal?{background:cal.bg,color:cal.color,
-                        border:isToday(day)?'2px solid #1a56db':'1px solid transparent'}:{}),
-                      ...(clickable?{cursor:'pointer'}:{}),
-                      position:'relative'
-                    }}
-                    title={rec?(BADGE_MAP[rec.status]?.label)+(rec.permMins?` (${rec.permMins}m)`):'Click to mark'}>
+                    style={dayStyle}
+                    title={rec ? ((BADGE_MAP[rec.status]?.label||'') + (rec.permMins ? ' (' + rec.permMins + 'm)' : '')) : 'Click to mark'}>
                     <div>{format(day,'d')}</div>
                     {cal&&<div style={{fontSize:'6px',lineHeight:1,fontWeight:700}}>{cal.label}</div>}
                     {hasPerm&&(
@@ -1161,4 +1163,4 @@ export default function Home(){
       </div>
     </>
   );
-}    
+}
