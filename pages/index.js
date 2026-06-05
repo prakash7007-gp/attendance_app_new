@@ -653,6 +653,8 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
     if(!emp)return;
     const ds=format(day,'yyyy-MM-dd');
     if(ds>todayStr())return;
+    // Employees can only mark/edit TODAY; admins can edit any past date
+    if(isEmployeeView&&ds!==todayStr())return;
     setMarkDate(ds);setMarkEmp(emp);
   }
 
@@ -752,7 +754,7 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
           {isEmployeeView&&(
             <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',
               padding:'7px 12px',marginBottom:'1rem',fontSize:'12px',color:'#0369a1'}}>
-              💡 Click any past day to mark or update attendance.
+              💡 You can only mark or update attendance for <strong>today</strong>. Contact admin to change past records.
             </div>
           )}
 
@@ -771,7 +773,9 @@ function CalendarTab({employees,records,defaultEmp,onRefresh}){
                 const sun=isSunday(day);
                 const isFuture=ds>todayStr();
                 const cal=rec?CAL_COLORS[rec.status]:null;
-                const clickable=isEmployeeView&&!isFuture;
+                const clickable=isEmployeeView
+                  ? ds===todayStr()
+                  : !isFuture;
                 const hasPerm=rec&&PERM_STATUSES.includes(rec.status)&&rec.permMins>0;
                 const dayStyle = {
                   position:'relative',
