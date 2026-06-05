@@ -56,7 +56,7 @@ function LoginScreen({ onLogin }) {
         width:'100%',maxWidth:'360px',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'}}>
         <div style={{textAlign:'center',marginBottom:'1.75rem'}}>
           <div style={{fontSize:'44px',marginBottom:'8px'}}>📋</div>
-          <h1 style={{fontSize:'22px',fontWeight:'700',color:'#111827',margin:'0 0 4px'}}>AttendEase</h1>
+          <h1 style={{fontSize:'22px',fontWeight:'700',color:'#111827',margin:'0 0 4px'}}>RJR Attendance Portal</h1>
           <p style={{fontSize:'13px',color:'#6b7280',margin:0}}>Company Attendance System</p>
         </div>
         <div style={{marginBottom:'14px'}}>
@@ -187,7 +187,7 @@ function Nav({tab,setTab,role,empName,onLogout}){
   return (
     <nav className="nav">
       <div className="nav-inner">
-        <span className="nav-brand">📋 AttendEase</span>
+        <span className="nav-brand">📋 RJR Attendance Portal</span>
         {/* Desktop tabs */}
         <div className="nav-tabs desktop-only">
           {tabs.map(([key,label])=>(
