@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Head from 'next/head';
 import {
   collection, doc, setDoc, getDocs, getDoc,
@@ -481,7 +481,7 @@ function exportCSV(employees, records, month) {
 function Nav({ tab, setTab, role, empName, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const tabs = role === 'admin'
-    ? [['today', 'Mark'], ['employees', 'Employees'], ['calendar', 'Calendar'], ['report', 'Report'], ['alerts', '⚠️ Alerts']]
+    ? [['today', 'Mark'], ['employees', 'Employees'], ['calendar', 'Calendar'], ['report', 'Report'], ['alerts', '⚠️ Alerts'], ['maintenance', '⚙️ Maintenance']]
     : [['calendar', 'My Calendar'], ['report', 'My Report']];
   return (
     <nav className="nav">
@@ -1618,6 +1618,779 @@ function ReportTab({ employees, records, onRefresh, isEmployee = false }) {
   );
 }
 
+
+// ─── Toast Helper ──────────────────────────────────────────────────────────
+
+function useToast() {
+  const [toast, setToast] = useState(null);
+  function show(msg, type = 'success') {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+  return { toast, show };
+}
+
+function Toast({ toast }) {
+  if (!toast) return null;
+  const colors = {
+    success: { bg: '#d1fae5', border: '#6ee7b7', text: '#065f46' },
+    error:   { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+    info:    { bg: '#e0f2fe', border: '#7dd3fc', text: '#0c4a6e' },
+  };
+  const c = colors[toast.type] || colors.info;
+  return (
+    <div style={{
+      position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999,
+      background: c.bg, border: `1px solid ${c.border}`, borderRadius: '10px',
+      padding: '12px 18px', fontSize: '13px', fontWeight: 600, color: c.text,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.12)', maxWidth: '320px'
+    }}>
+      {toast.msg}
+    </div>
+  );
+}
+
+// ─── Maintenance: Section Accordion ───────────────────────────────────────
+
+function MaintSection({ icon, title, subtitle, badge, badgeColor = '#1a56db', children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px',
+      overflow: 'hidden', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+    }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center',
+          gap: '12px', background: open ? '#f8faff' : '#fff', border: 'none',
+          borderBottom: open ? '1px solid #e5e7eb' : 'none', cursor: 'pointer', textAlign: 'left'
+        }}
+      >
+        <span style={{ fontSize: '22px', flexShrink: 0 }}>{icon}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: '14px', color: '#111827' }}>{title}</div>
+          <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '1px' }}>{subtitle}</div>
+        </div>
+        {badge && (
+          <span style={{
+            fontSize: '11px', fontWeight: 700, padding: '3px 10px',
+            borderRadius: '20px', background: badgeColor + '18',
+            color: badgeColor, border: `1px solid ${badgeColor}33`, flexShrink: 0
+          }}>{badge}</span>
+        )}
+        <span style={{
+          fontSize: '18px', color: '#9ca3af', flexShrink: 0,
+          display: 'inline-block', transition: 'transform 0.2s',
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)'
+        }}>⌄</span>
+      </button>
+      {open && <div style={{ padding: '1.25rem' }}>{children}</div>}
+    </div>
+  );
+}
+
+// ─── Maintenance: Inline Employee Row ─────────────────────────────────────
+
+function MaintEmpRow({ emp, passwords, onSave, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [form, setForm]       = useState({
+    name: emp.name, designation: emp.designation || '',
+    phone: emp.phone || '', shiftId: emp.shiftId || 'A',
+    password: passwords[emp.id] || ''
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  async function save() {
+    if (!form.name.trim()) return alert('Name is required');
+    setSaving(true);
+    await setDoc(doc(db, 'employees', emp.id), {
+      ...emp, name: form.name.trim(), designation: form.designation.trim(),
+      phone: form.phone.trim(), shiftId: form.shiftId
+    });
+    await setDoc(doc(db, 'config', 'passwords'),
+      { employees: { [emp.id]: form.password } }, { merge: true });
+    setSaving(false);
+    setEditing(false);
+    onSave();
+  }
+
+  const shiftColors = { A: '#1a56db', B: '#0891b2', C: '#7c3aed' };
+  const shift = getShift(emp.shiftId);
+
+  if (!editing) return (
+    <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+      <td style={{ padding: '10px 8px', fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+        {emp.name}
+        {emp.selfRegistered && (
+          <span style={{ marginLeft: '5px', fontSize: '10px', background: '#e0f2fe',
+            color: '#0891b2', padding: '1px 6px', borderRadius: '10px', fontWeight: 700 }}>NEW</span>
+        )}
+      </td>
+      <td style={{ padding: '10px 8px', fontSize: '12px', color: '#6b7280' }}>{emp.designation || '—'}</td>
+      <td style={{ padding: '10px 8px', fontSize: '12px', color: '#6b7280' }}>{emp.phone || '—'}</td>
+      <td style={{ padding: '10px 8px' }}>
+        <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px',
+          background: (shiftColors[emp.shiftId || 'A']) + '18',
+          color: shiftColors[emp.shiftId || 'A'] }}>
+          {shift?.label}
+        </span>
+      </td>
+      <td style={{ padding: '10px 8px', fontSize: '12px', color: '#9ca3af', fontFamily: 'monospace' }}>
+        {'•'.repeat(Math.min(passwords[emp.id]?.length || 0, 8))}
+      </td>
+      <td style={{ padding: '10px 8px' }}>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button onClick={() => setEditing(true)}
+            style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 600,
+              background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe',
+              borderRadius: '6px', cursor: 'pointer' }}>Edit</button>
+          <button onClick={() => onDelete(emp)}
+            style={{ padding: '4px 8px', fontSize: '11px', fontWeight: 600,
+              background: '#fff5f5', color: '#e02424', border: '1px solid #fecaca',
+              borderRadius: '6px', cursor: 'pointer' }}>Del</button>
+        </div>
+      </td>
+    </tr>
+  );
+
+  return (
+    <tr style={{ background: '#f0f9ff', borderBottom: '1px solid #bae6fd' }}>
+      <td style={{ padding: '8px' }}>
+        <input value={form.name} onChange={e => set('name', e.target.value)}
+          style={{ width: '100%', padding: '5px 8px', border: '1.5px solid #0891b2',
+            borderRadius: '6px', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} />
+      </td>
+      <td style={{ padding: '8px' }}>
+        <input value={form.designation} onChange={e => set('designation', e.target.value)}
+          placeholder="Designation"
+          style={{ width: '100%', padding: '5px 8px', border: '1px solid #d1d5db',
+            borderRadius: '6px', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} />
+      </td>
+      <td style={{ padding: '8px' }}>
+        <input value={form.phone} onChange={e => set('phone', e.target.value)}
+          placeholder="Phone"
+          style={{ width: '100%', padding: '5px 8px', border: '1px solid #d1d5db',
+            borderRadius: '6px', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} />
+      </td>
+      <td style={{ padding: '8px' }}>
+        <select value={form.shiftId} onChange={e => set('shiftId', e.target.value)}
+          style={{ width: '100%', padding: '5px 6px', border: '1px solid #d1d5db',
+            borderRadius: '6px', fontSize: '12px', outline: 'none' }}>
+          {SHIFTS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+      </td>
+      <td style={{ padding: '8px' }}>
+        <input value={form.password} onChange={e => set('password', e.target.value)}
+          placeholder="New password"
+          style={{ width: '100%', padding: '5px 8px', border: '1px solid #d1d5db',
+            borderRadius: '6px', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} />
+      </td>
+      <td style={{ padding: '8px' }}>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button onClick={save} disabled={saving}
+            style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 700,
+              background: '#0891b2', color: '#fff', border: 'none',
+              borderRadius: '6px', cursor: 'pointer' }}>{saving ? '…' : '✓'}</button>
+          <button onClick={() => setEditing(false)}
+            style={{ padding: '4px 8px', fontSize: '11px',
+              background: '#fff', color: '#6b7280', border: '1px solid #d1d5db',
+              borderRadius: '6px', cursor: 'pointer' }}>✕</button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ─── Maintenance: Bulk Shift Modal ─────────────────────────────────────────
+
+function BulkShiftModal({ employees, onDone, onClose }) {
+  const [from, setFrom]     = useState('A');
+  const [to, setTo]         = useState('B');
+  const [saving, setSaving] = useState(false);
+  const affected = employees.filter(e => (e.shiftId || 'A') === from);
+
+  async function apply() {
+    if (from === to) return alert('Source and target shifts must differ');
+    if (!affected.length) return alert('No employees in that shift');
+    if (!confirm(`Move ${affected.length} employees from Shift ${from} → Shift ${to}?`)) return;
+    setSaving(true);
+    const batch = writeBatch(db);
+    affected.forEach(e => batch.update(doc(db, 'employees', e.id), { shiftId: to }));
+    await batch.commit();
+    setSaving(false);
+    onDone();
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '1.5rem',
+        width: '100%', maxWidth: '380px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>Bulk Shift Reassign</h2>
+        <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '1.25rem' }}>
+          Move all employees from one shift to another at once.
+        </p>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '1rem' }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151',
+              display: 'block', marginBottom: '4px' }}>From Shift</label>
+            <select value={from} onChange={e => setFrom(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db',
+                borderRadius: '8px', fontSize: '13px', outline: 'none' }}>
+              {SHIFTS.map(s => <option key={s.id} value={s.id}>{s.label} ({s.display})</option>)}
+            </select>
+          </div>
+          <span style={{ fontSize: '20px', marginTop: '16px' }}>→</span>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151',
+              display: 'block', marginBottom: '4px' }}>To Shift</label>
+            <select value={to} onChange={e => setTo(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db',
+                borderRadius: '8px', fontSize: '13px', outline: 'none' }}>
+              {SHIFTS.map(s => <option key={s.id} value={s.id}>{s.label} ({s.display})</option>)}
+            </select>
+          </div>
+        </div>
+        {affected.length > 0 ? (
+          <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px',
+            padding: '10px 12px', marginBottom: '1rem', fontSize: '12px', color: '#92400e' }}>
+            <strong>{affected.length} employee(s)</strong> will be moved:{' '}
+            {affected.map(e => e.name).join(', ')}
+          </div>
+        ) : (
+          <div style={{ background: '#f3f4f6', borderRadius: '8px', padding: '10px 12px',
+            marginBottom: '1rem', fontSize: '12px', color: '#6b7280' }}>
+            No employees in Shift {from} currently.
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <button onClick={onClose}
+            style={{ padding: '9px 16px', background: '#fff', color: '#374151',
+              border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={apply} disabled={saving || !affected.length}
+            style={{ padding: '9px 16px',
+              background: saving || !affected.length ? '#9ca3af' : '#1a56db',
+              color: '#fff', border: 'none', borderRadius: '8px',
+              fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            {saving ? 'Applying…' : `Move ${affected.length} Employee(s)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Maintenance: CSV Import Modal ─────────────────────────────────────────
+
+function ImportModal({ existingEmployees, onDone, onClose }) {
+  const [step, setStep]       = useState('upload');
+  const [rows, setRows]       = useState([]);
+  const [saving, setSaving]   = useState(false);
+  const [results, setResults] = useState(null);
+  const fileRef               = useRef(null);
+
+  function parseCSV(text) {
+    const lines = text.trim().split('\n').filter(Boolean);
+    if (!lines.length) return [];
+    const header = lines[0].toLowerCase().replace(/\s/g, '');
+    if (!header.includes('name')) {
+      alert('CSV must have headers: Name, Designation, Phone, Shift, Password');
+      return [];
+    }
+    return lines.slice(1).map((line, idx) => {
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      return {
+        _row: idx + 2,
+        name:        cols[0] || '',
+        designation: cols[1] || '',
+        phone:       cols[2] || '',
+        shiftId:     ['A','B','C'].includes((cols[3]||'A').toUpperCase()) ? (cols[3]||'A').toUpperCase() : 'A',
+        password:    cols[4] || 'pass1234',
+        _exists:     existingEmployees.some(e => e.name.toLowerCase().trim() === (cols[0]||'').toLowerCase().trim()),
+        _valid:      (cols[0]||'').trim().length > 0,
+      };
+    }).filter(r => r._valid);
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const parsed = parseCSV(e.target.result);
+      setRows(parsed);
+      if (parsed.length) setStep('preview');
+    };
+    reader.readAsText(file);
+  }
+
+  async function importRows() {
+    const toImport = rows.filter(r => !r._exists);
+    if (!toImport.length) return alert('No new employees to import');
+    setSaving(true);
+    let imported = 0, failed = 0;
+    for (const row of toImport) {
+      try {
+        const id = `emp_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+        await setDoc(doc(db, 'employees', id), {
+          id, name: row.name, designation: row.designation,
+          phone: row.phone, shiftId: row.shiftId, createdAt: Date.now()
+        });
+        await setDoc(doc(db, 'config', 'passwords'),
+          { employees: { [id]: row.password } }, { merge: true });
+        imported++;
+      } catch { failed++; }
+    }
+    setResults({ imported, failed, skipped: rows.filter(r => r._exists).length });
+    setStep('done');
+    setSaving(false);
+    onDone();
+  }
+
+  function downloadTemplate() {
+    const csv = 'Name,Designation,Phone,Shift,Password\nRajan Kumar,Sales Executive,9876543210,A,rajan2024\nPriya Sharma,Account Manager,9123456789,B,priya2024\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'employee_import_template.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '1.5rem',
+        width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>Bulk Import Employees</h2>
+        <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '1.25rem' }}>
+          Upload a CSV file to add multiple employees at once.
+        </p>
+
+        {step === 'upload' && (
+          <>
+            <div style={{ background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: '12px',
+              padding: '2rem', textAlign: 'center', marginBottom: '1rem', cursor: 'pointer' }}
+              onClick={() => fileRef.current?.click()}>
+              <div style={{ fontSize: '36px', marginBottom: '8px' }}>📂</div>
+              <p style={{ fontWeight: 600, fontSize: '14px', color: '#374151', marginBottom: '4px' }}>
+                Click to select CSV file
+              </p>
+              <p style={{ fontSize: '12px', color: '#9ca3af' }}>
+                Format: Name, Designation, Phone, Shift (A/B/C), Password
+              </p>
+              <input ref={fileRef} type="file" accept=".csv"
+                onChange={e => handleFile(e.target.files[0])} style={{ display: 'none' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={downloadTemplate}
+                style={{ flex: 1, padding: '9px', background: '#f0f9ff', color: '#0891b2',
+                  border: '1px solid #bae6fd', borderRadius: '8px',
+                  fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                ⬇ Download Template CSV
+              </button>
+              <button onClick={onClose}
+                style={{ padding: '9px 16px', background: '#fff', color: '#374151',
+                  border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </>
+        )}
+
+        {step === 'preview' && (
+          <>
+            <div style={{ marginBottom: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', background: '#d1fae5', color: '#065f46',
+                padding: '3px 10px', borderRadius: '20px', fontWeight: 700 }}>
+                ✓ {rows.filter(r => !r._exists).length} new
+              </span>
+              {rows.filter(r => r._exists).length > 0 && (
+                <span style={{ fontSize: '12px', background: '#fef3c7', color: '#92400e',
+                  padding: '3px 10px', borderRadius: '20px', fontWeight: 700 }}>
+                  ⚠ {rows.filter(r => r._exists).length} will be skipped (name exists)
+                </span>
+              )}
+            </div>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden',
+              marginBottom: '1rem', maxHeight: '280px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb' }}>
+                    {['Name','Designation','Phone','Shift','Password','Status'].map(h => (
+                      <th key={h} style={{ padding: '7px 10px', textAlign: 'left',
+                        fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb',
+                        fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} style={{ background: r._exists ? '#fffbeb' : '#fff',
+                      borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '7px 10px', fontWeight: 600 }}>{r.name}</td>
+                      <td style={{ padding: '7px 10px', color: '#6b7280' }}>{r.designation || '—'}</td>
+                      <td style={{ padding: '7px 10px', color: '#6b7280' }}>{r.phone || '—'}</td>
+                      <td style={{ padding: '7px 10px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '11px', padding: '2px 6px',
+                          borderRadius: '10px', background: '#e0f2fe', color: '#0891b2' }}>
+                          Shift {r.shiftId}
+                        </span>
+                      </td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#9ca3af', fontSize: '11px' }}>
+                        {'•'.repeat(Math.min(r.password.length, 8))}
+                      </td>
+                      <td style={{ padding: '7px 10px' }}>
+                        {r._exists
+                          ? <span style={{ fontSize: '10px', color: '#d97706', fontWeight: 700 }}>SKIP</span>
+                          : <span style={{ fontSize: '10px', color: '#0e9f6e', fontWeight: 700 }}>NEW</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => { setStep('upload'); setRows([]); }}
+                style={{ padding: '9px 14px', background: '#fff', color: '#374151',
+                  border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>← Back</button>
+              <button onClick={importRows} disabled={saving || !rows.filter(r => !r._exists).length}
+                style={{ padding: '9px 16px', fontWeight: 600,
+                  background: saving ? '#9ca3af' : '#0891b2', color: '#fff',
+                  border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                {saving ? 'Importing…' : `✅ Import ${rows.filter(r => !r._exists).length} Employees`}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'done' && results && (
+          <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+            <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎉</div>
+            <h3 style={{ fontWeight: 700, fontSize: '16px', marginBottom: '16px' }}>Import Complete</h3>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center',
+              marginBottom: '20px', flexWrap: 'wrap' }}>
+              <div style={{ background: '#d1fae5', borderRadius: '10px', padding: '12px 20px' }}>
+                <div style={{ fontWeight: 800, fontSize: '22px', color: '#065f46' }}>{results.imported}</div>
+                <div style={{ fontSize: '11px', color: '#065f46', fontWeight: 600 }}>Imported</div>
+              </div>
+              <div style={{ background: '#fef3c7', borderRadius: '10px', padding: '12px 20px' }}>
+                <div style={{ fontWeight: 800, fontSize: '22px', color: '#92400e' }}>{results.skipped}</div>
+                <div style={{ fontSize: '11px', color: '#92400e', fontWeight: 600 }}>Skipped</div>
+              </div>
+              {results.failed > 0 && (
+                <div style={{ background: '#fee2e2', borderRadius: '10px', padding: '12px 20px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '22px', color: '#991b1b' }}>{results.failed}</div>
+                  <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: 600 }}>Failed</div>
+                </div>
+              )}
+            </div>
+            <button onClick={onClose}
+              style={{ padding: '10px 28px', background: '#0891b2', color: '#fff',
+                border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Maintenance Tab ────────────────────────────────────────────────────────
+
+function MaintenanceTab({ employees, records, onRefresh }) {
+  const toast = useToast();
+  const [passwords, setPasswords]     = useState({});
+  const [loadingPw, setLoadingPw]     = useState(true);
+  const [showBulkShift, setShowBulkShift] = useState(false);
+  const [showImport, setShowImport]   = useState(false);
+  const [search, setSearch]           = useState('');
+  const [adminPwForm, setAdminPwForm] = useState({ current: '', next: '', confirm: '' });
+  const [adminPwSaving, setAdminPwSaving] = useState(false);
+  const [cleanMonth, setCleanMonth]   = useState(format(new Date(), 'yyyy-MM'));
+  const [deleting, setDeleting]       = useState(false);
+
+  useEffect(() => {
+    getDoc(doc(db, 'config', 'passwords')).then(snap => {
+      if (snap.exists()) setPasswords(snap.data().employees || {});
+      setLoadingPw(false);
+    }).catch(() => setLoadingPw(false));
+  }, []);
+
+  async function reloadPasswords() {
+    const snap = await getDoc(doc(db, 'config', 'passwords'));
+    if (snap.exists()) setPasswords(snap.data().employees || {});
+  }
+
+  function exportAllEmployees() {
+    const header = 'ID,Name,Designation,Phone,Shift,Self Registered,Created At\n';
+    const rows   = employees.map(e =>
+      `${e.id},${e.name},${e.designation||''},${e.phone||''},${e.shiftId||'A'},${e.selfRegistered?'Yes':'No'},${new Date(e.createdAt||0).toLocaleDateString()}`
+    ).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'employees_export.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleAdminPwSave() {
+    const { current, next, confirm: confirmPw } = adminPwForm;
+    if (!current || !next || !confirmPw) return alert('All fields required');
+    if (next.length < 6) return alert('New password must be at least 6 characters');
+    if (next !== confirmPw) return alert('Passwords do not match');
+    setAdminPwSaving(true);
+    try {
+      const snap = await getDoc(doc(db, 'config', 'passwords'));
+      const stored = snap.exists() ? (snap.data().admin || 'admin123') : 'admin123';
+      if (current !== stored) { alert('Current password is incorrect'); setAdminPwSaving(false); return; }
+      await setDoc(doc(db, 'config', 'passwords'), { admin: next }, { merge: true });
+      setAdminPwForm({ current: '', next: '', confirm: '' });
+      toast.show('✅ Admin password updated successfully');
+    } catch (e) { alert('Error: ' + e.message); }
+    setAdminPwSaving(false);
+  }
+
+  async function handleDeleteMonthRecords() {
+    const moRecs = records.filter(r => r.date.startsWith(cleanMonth));
+    if (!moRecs.length) return alert('No records found for that month');
+    if (!confirm(`Permanently delete ALL ${moRecs.length} attendance records for ${cleanMonth}?`)) return;
+    setDeleting(true);
+    try {
+      const batch = writeBatch(db);
+      moRecs.forEach(r => batch.delete(doc(db, 'attendance', r.id)));
+      await batch.commit();
+      toast.show(`🗑️ Deleted ${moRecs.length} records for ${cleanMonth}`);
+      onRefresh();
+    } catch (e) { alert('Error: ' + e.message); }
+    setDeleting(false);
+  }
+
+  async function handleDeleteEmployee(emp) {
+    if (!confirm(`Delete ${emp.name} and all their attendance records? This is permanent.`)) return;
+    try {
+      const empRecs = records.filter(r => r.empId === emp.id);
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'employees', emp.id));
+      empRecs.forEach(r => batch.delete(doc(db, 'attendance', r.id)));
+      await batch.commit();
+      toast.show(`🗑️ Deleted ${emp.name} and ${empRecs.length} records`);
+      onRefresh();
+    } catch (e) { alert('Error: ' + e.message); }
+  }
+
+  const filtered = employees.filter(e =>
+    e.name.toLowerCase().includes(search.toLowerCase()) ||
+    (e.designation || '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  const months = [...new Set(records.map(r => r.date.slice(0,7)))].sort().reverse();
+  const cleanMonthRecs = records.filter(r => r.date.startsWith(cleanMonth));
+  const selfRegCount = employees.filter(e => e.selfRegistered).length;
+
+  return (
+    <div>
+      <Toast toast={toast.toast} />
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        marginBottom: '1.25rem', flexWrap: 'wrap', gap: '10px' }}>
+        <div>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#111827', marginBottom: '2px' }}>
+            ⚙️ Maintenance
+          </h1>
+          <p style={{ fontSize: '13px', color: '#6b7280' }}>
+            Manage employees, bulk operations, passwords, and system data.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowImport(true)}
+            style={{ padding: '8px 14px', fontWeight: 600, fontSize: '12px',
+              background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7',
+              borderRadius: '8px', cursor: 'pointer' }}>⬆ Bulk Import</button>
+          <button onClick={exportAllEmployees}
+            style={{ padding: '8px 14px', fontWeight: 600, fontSize: '12px',
+              background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc',
+              borderRadius: '8px', cursor: 'pointer' }}>⬇ Export Employees</button>
+          <button onClick={() => setShowBulkShift(true)}
+            style={{ padding: '8px 14px', fontWeight: 600, fontSize: '12px',
+              background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd',
+              borderRadius: '8px', cursor: 'pointer' }}>🔄 Bulk Shift Change</button>
+        </div>
+      </div>
+
+      {/* System Overview */}
+      <MaintSection icon="📊" title="System Overview" subtitle="Quick stats about your data"
+        badge={`${employees.length} employees`} badgeColor="#0891b2" defaultOpen={true}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+          gap: '10px', marginBottom: '4px' }}>
+          {[
+            { label: 'Total Employees', value: employees.length, color: '#1a56db', icon: '👥' },
+            { label: 'Total Records',   value: records.length,   color: '#0891b2', icon: '📋' },
+            { label: 'Months of Data',  value: months.length,    color: '#7c3aed', icon: '📅' },
+            { label: 'Self-Registered', value: selfRegCount,     color: '#0e9f6e', icon: '🆕' },
+            ...SHIFTS.map(s => ({
+              label: s.label, icon: '⏰',
+              value: employees.filter(e => (e.shiftId||'A') === s.id).length,
+              color: { A: '#1a56db', B: '#0891b2', C: '#7c3aed' }[s.id]
+            })),
+          ].map((s, i) => (
+            <div key={i} style={{ background: '#f8fafc', borderRadius: '10px',
+              padding: '12px 14px', border: '1px solid #e5e7eb' }}>
+              <div style={{ fontSize: '18px', marginBottom: '4px' }}>{s.icon}</div>
+              <div style={{ fontWeight: 800, fontSize: '20px', color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </MaintSection>
+
+      {/* Edit All Employees */}
+      <MaintSection icon="✏️" title="Edit All Employees"
+        subtitle="Inline edit name, shift, designation, phone, and password"
+        badge={`${employees.length} total`} badgeColor="#1a56db">
+        <div style={{ marginBottom: '10px' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Search by name or designation…"
+            style={{ width: '100%', padding: '9px 12px', border: '1.5px solid #e5e7eb',
+              borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+        </div>
+        {loadingPw ? (
+          <p style={{ color: '#6b7280', fontSize: '13px' }}>Loading…</p>
+        ) : (
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '580px' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb' }}>
+                    {['Name','Designation','Phone','Shift','Password','Actions'].map(h => (
+                      <th key={h} style={{ padding: '9px 8px', textAlign: 'left',
+                        fontSize: '11px', fontWeight: 700, color: '#374151',
+                        borderBottom: '1px solid #e5e7eb', textTransform: 'uppercase',
+                        letterSpacing: '0.04em' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem',
+                      color: '#9ca3af', fontSize: '13px' }}>No employees found</td></tr>
+                  )}
+                  {filtered.map(emp => (
+                    <MaintEmpRow key={emp.id} emp={emp} passwords={passwords}
+                      onSave={() => { toast.show(`✅ ${emp.name} updated`); onRefresh(); reloadPasswords(); }}
+                      onDelete={async (e) => {
+                        if (!confirm(`Delete ${e.name}? Attendance records will be kept.`)) return;
+                        await deleteDoc(doc(db, 'employees', e.id));
+                        toast.show(`🗑️ ${e.name} deleted`);
+                        onRefresh();
+                      }} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </MaintSection>
+
+      {/* Admin Password */}
+      <MaintSection icon="🔐" title="Admin Password"
+        subtitle="Change the admin login password" badgeColor="#7c3aed">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '12px', marginBottom: '14px' }}>
+          {[['current','Current Password'],['next','New Password'],['confirm','Confirm New']].map(([key, label]) => (
+            <div key={key}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151',
+                display: 'block', marginBottom: '5px' }}>{label}</label>
+              <input type="password" value={adminPwForm[key]}
+                onChange={e => setAdminPwForm(f => ({ ...f, [key]: e.target.value }))}
+                placeholder={key === 'current' ? 'Current password' : 'Min. 6 characters'}
+                style={{ width: '100%', padding: '9px 12px', border: '1.5px solid #d1d5db',
+                  borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <button onClick={handleAdminPwSave} disabled={adminPwSaving}
+              style={{ width: '100%', padding: '9px 16px', fontWeight: 600,
+                background: adminPwSaving ? '#9ca3af' : '#1a56db', color: '#fff',
+                border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
+              {adminPwSaving ? 'Saving…' : '🔐 Update Password'}
+            </button>
+          </div>
+        </div>
+      </MaintSection>
+
+      {/* Data Cleanup */}
+      <MaintSection icon="🗑️" title="Data Cleanup"
+        subtitle="Delete attendance records by month or remove employees"
+        badge="Destructive" badgeColor="#e02424">
+        <div style={{ background: '#fff8f1', border: '1.5px solid #fed7aa', borderRadius: '10px',
+          padding: '14px', marginBottom: '14px' }}>
+          <p style={{ fontSize: '12px', color: '#92400e', fontWeight: 600, marginBottom: '10px' }}>
+            ⚠️ These actions are permanent and cannot be reversed.
+          </p>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151',
+                display: 'block', marginBottom: '5px' }}>Select Month</label>
+              <input type="month" value={cleanMonth} onChange={e => setCleanMonth(e.target.value)}
+                style={{ padding: '8px 10px', border: '1px solid #d1d5db',
+                  borderRadius: '8px', fontSize: '13px', outline: 'none' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>
+                {cleanMonthRecs.length} records found for {cleanMonth}
+              </div>
+              <button onClick={handleDeleteMonthRecords} disabled={deleting || !cleanMonthRecs.length}
+                style={{ padding: '8px 14px', fontWeight: 600, fontSize: '12px',
+                  background: deleting || !cleanMonthRecs.length ? '#f3f4f6' : '#fee2e2',
+                  color: deleting || !cleanMonthRecs.length ? '#9ca3af' : '#991b1b',
+                  border: `1px solid ${deleting || !cleanMonthRecs.length ? '#e5e7eb' : '#fca5a5'}`,
+                  borderRadius: '8px', cursor: 'pointer' }}>
+                {deleting ? 'Deleting…' : `🗑️ Delete ${cleanMonth} Records`}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: '12px', fontWeight: 700, color: '#374151',
+          marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Delete Individual Employees
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+          gap: '6px' }}>
+          {employees.map(emp => (
+            <div key={emp.id} style={{ display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', padding: '8px 10px', background: '#fff',
+              border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px' }}>
+              <span style={{ fontWeight: 600, color: '#111827', overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '130px' }}>
+                {emp.name}
+              </span>
+              <button onClick={() => handleDeleteEmployee(emp)}
+                style={{ padding: '3px 8px', fontSize: '11px', fontWeight: 700,
+                  background: '#fff5f5', color: '#e02424', border: '1px solid #fecaca',
+                  borderRadius: '6px', cursor: 'pointer', flexShrink: 0 }}>Del</button>
+            </div>
+          ))}
+        </div>
+      </MaintSection>
+
+      {/* Modals */}
+      {showBulkShift && (
+        <BulkShiftModal employees={employees}
+          onDone={() => { setShowBulkShift(false); toast.show('✅ Shifts updated'); onRefresh(); }}
+          onClose={() => setShowBulkShift(false)} />
+      )}
+      {showImport && (
+        <ImportModal existingEmployees={employees}
+          onDone={() => onRefresh()}
+          onClose={() => setShowImport(false)} />
+      )}
+    </div>
+  );
+}
+
+
 // ─── Main App ──────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -1687,6 +2460,7 @@ export default function Home() {
                 {tab === 'calendar'   && <CalendarTab  employees={employees} records={records} onRefresh={fetchData} />}
                 {tab === 'report'     && <ReportTab    employees={employees} records={records} onRefresh={fetchData} />}
                 {tab === 'alerts'     && <AlertsTab    employees={employees} records={records} />}
+                {tab === 'maintenance' && <MaintenanceTab employees={employees} records={records} onRefresh={fetchData} />}
               </>
             )}
             {role === 'employee' && (
