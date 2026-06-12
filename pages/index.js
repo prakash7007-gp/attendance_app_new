@@ -811,10 +811,13 @@ function EmployeeModal({ emp, onSave, onClose }) {
 // ─── Attendance Modal ──────────────────────────────────────────────────────
 
 function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
-  const [status, setStatus]     = useState(existing?.status || STATUS.PRESENT);
-  const [permMins, setPermMins] = useState(existing?.permMins || '');
-  const [note, setNote]         = useState(existing?.note || '');
-  const shift     = getShift(emp.shiftId);
+  const [status, setStatus]         = useState(existing?.status || STATUS.PRESENT);
+  const [permMins, setPermMins]     = useState(existing?.permMins || '');
+  const [note, setNote]             = useState(existing?.note || '');
+  // Shift override: defaults to employee's assigned shift, but can be changed for this day
+  const [overrideShift, setOverrideShift] = useState(existing?.shiftId || emp.shiftId || 'A');
+  const isShiftOverridden = overrideShift !== (emp.shiftId || 'A');
+  const shift     = getShift(overrideShift);
   const mins      = Number(permMins) || 0;
   const needsMins = PERM_STATUSES.includes(status);
   const isExcess  = needsMins && mins > MAX_PERMISSION_MINS;
@@ -843,7 +846,11 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
       id: recId, empId: emp.id, empName: emp.name,
       date: selectedDate, month: selectedDate.slice(0, 7),
       status, permMins: finalMins,
-      note, shiftId: emp.shiftId || 'A', markedAt: Date.now()
+      note,
+      shiftId: overrideShift,
+      defaultShiftId: emp.shiftId || 'A',
+      shiftOverridden: isShiftOverridden,
+      markedAt: Date.now()
     });
     onSave();
   }
@@ -857,8 +864,64 @@ function AttendanceModal({ emp, existing, selectedDate, onSave, onClose }) {
           <span style={{ fontWeight: 700, fontSize: '15px' }}>{emp.name}</span>
           <span style={{ color: '#6b7280' }}>·</span>
           <span style={{ fontSize: '13px', color: '#6b7280' }}>{selectedDate}</span>
-          <ShiftBadge shiftId={emp.shiftId} />
+          <ShiftBadge shiftId={emp.shiftId || 'A'} />
+          {isShiftOverridden && (
+            <span style={{ fontSize: '11px', background: '#fff7ed', color: '#c2410c',
+              border: '1px solid #fed7aa', borderRadius: '20px',
+              padding: '2px 8px', fontWeight: 700 }}>
+              → Override: {shift.label}
+            </span>
+          )}
         </div>
+
+        {/* ── Shift Override ── */}
+        <div style={{ background: isShiftOverridden ? '#fff7ed' : '#f8fafc',
+          border: `1.5px solid ${isShiftOverridden ? '#f97316' : '#e5e7eb'}`,
+          borderRadius: '10px', padding: '10px 12px', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: '7px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#374151',
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              🔄 Shift for This Day
+            </span>
+            {isShiftOverridden && (
+              <button onClick={() => setOverrideShift(emp.shiftId || 'A')}
+                style={{ fontSize: '11px', color: '#6b7280', background: 'none',
+                  border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                Reset to default
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {SHIFTS.map(s => {
+              const isDefault = s.id === (emp.shiftId || 'A');
+              const isSelected = overrideShift === s.id;
+              return (
+                <button key={s.id} onClick={() => setOverrideShift(s.id)}
+                  style={{
+                    flex: 1, minWidth: '90px', padding: '7px 8px', borderRadius: '8px',
+                    border: `2px solid ${isSelected ? (isDefault ? '#1a56db' : '#f97316') : '#e5e7eb'}`,
+                    background: isSelected ? (isDefault ? '#eff6ff' : '#fff7ed') : 'white',
+                    cursor: 'pointer', textAlign: 'center',
+                  }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px',
+                    color: isSelected ? (isDefault ? '#1a56db' : '#c2410c') : '#374151' }}>
+                    {s.label}
+                    {isDefault && <span style={{ fontSize: '9px', marginLeft: '3px',
+                      color: '#9ca3af', fontWeight: 400 }}>(default)</span>}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '1px' }}>{s.display}</div>
+                </button>
+              );
+            })}
+          </div>
+          {isShiftOverridden && (
+            <div style={{ fontSize: '11px', color: '#c2410c', marginTop: '6px', fontWeight: 600 }}>
+              ⚠️ This employee's default is {getShift(emp.shiftId).label} ({getShift(emp.shiftId).display})
+            </div>
+          )}
+        </div>
+
         <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px',
           padding: '6px 12px', marginBottom: '0.75rem', fontSize: '12px', color: '#0c4a6e' }}>
           🕐 {shift.start}–{shift.end} | Permission limit: <strong>120 min/month</strong>
@@ -1007,9 +1070,21 @@ function TodayTab({ employees, records, onRefresh }) {
                               <span style={{ marginLeft: '4px', fontSize: '10px', color: '#d97706' }}>⚠️</span>
                             )}
                           </td>
-                          <td>{rec
-                            ? <StatusBadge status={rec.status} />
-                            : <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>}
+                          <td>
+                            {rec
+                              ? <>
+                                  <StatusBadge status={rec.status} />
+                                  {rec.shiftOverridden && (
+                                    <span style={{ display: 'inline-block', marginLeft: '4px',
+                                      fontSize: '10px', background: '#fff7ed', color: '#c2410c',
+                                      border: '1px solid #fed7aa', borderRadius: '10px',
+                                      padding: '1px 5px', fontWeight: 700, verticalAlign: 'middle' }}
+                                      title={`Shift override: ${getShift(rec.shiftId).label}`}>
+                                      🔄 {getShift(rec.shiftId).label}
+                                    </span>
+                                  )}
+                                </>
+                              : <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>}
                           </td>
                           <td style={{ fontSize: '12px' }}>
                             {rec && PERM_STATUSES.includes(rec.status) && rec.permMins ? `${rec.permMins}m` : '—'}
@@ -1342,12 +1417,21 @@ function CalendarTab({ employees, records, defaultEmp, onRefresh }) {
             <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '0.75rem' }}>Attendance Details</h3>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Date</th><th>Status</th><th>Perm</th><th>Note</th></tr></thead>
+                <thead><tr><th>Date</th><th>Status</th><th>Shift</th><th>Perm</th><th>Note</th></tr></thead>
                 <tbody>
                   {empRecs.sort((a, b) => a.date.localeCompare(b.date)).map(r => (
                     <tr key={r.id}>
                       <td style={{ fontSize: '12px' }}>{format(parseISO(r.date), 'EEE dd MMM')}</td>
                       <td><StatusBadge status={r.status} /></td>
+                      <td style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                        <ShiftBadge shiftId={r.shiftId || emp.shiftId} />
+                        {r.shiftOverridden && (
+                          <span style={{ display: 'block', fontSize: '10px',
+                            color: '#c2410c', fontWeight: 600, marginTop: '2px' }}>
+                            ↑ override
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontSize: '12px' }}>
                         {PERM_STATUSES.includes(r.status) && r.permMins
                           ? <span style={{ color: '#f97316', fontWeight: 600 }}>−{r.permMins}m</span>
